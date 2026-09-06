@@ -26,6 +26,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import discovery
 from homeassistant.util import slugify
 
+from .config_flow import AirplayNotifierConfigFlow
 from .const import (
     CONF_ANNOUNCE_PREFIX,
     CONF_DENY_DOMAINS,
@@ -149,6 +150,21 @@ async def async_setup_entry(
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True
+
+
+async def async_migrate_entry(
+    hass: HomeAssistant, entry: AirplayNotifierConfigEntry
+) -> bool:
+    """Migrate a config entry to the current schema.
+
+    Nothing to do yet: the only schema in the wild is 1.1, which is what
+    `AirplayNotifierConfigFlow.VERSION`/`MINOR_VERSION` still declare. The
+    hook exists from the start so that the first real schema change is a
+    one-file edit rather than a redesign, and so a *downgrade* (an entry
+    stored by a newer version) is reported as a migration failure by core
+    instead of loading with unknown keys.
+    """
+    return entry.version == AirplayNotifierConfigFlow.VERSION
 
 
 async def async_unload_entry(

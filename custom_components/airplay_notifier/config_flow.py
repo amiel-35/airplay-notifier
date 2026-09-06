@@ -101,7 +101,14 @@ def _options_schema(current: dict[str, Any]) -> vol.Schema:
 class AirplayNotifierConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for AirPlay Notifier."""
 
+    # Bump MINOR_VERSION for backwards-compatible entry changes (a new
+    # option with a default), VERSION for breaking ones. Core refuses to
+    # load an entry whose stored version is *newer* than the handler's
+    # (`homeassistant/config_entries.py`, `async_migrate_entry` /
+    # `_async_migrate_and_setup`), so both must exist from the start for a
+    # downgrade to fail cleanly instead of silently.
     VERSION = 1
+    MINOR_VERSION = 1
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None

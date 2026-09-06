@@ -14,6 +14,7 @@ from custom_components.airplay_notifier.const import (
     DOMAIN,
 )
 from custom_components.airplay_notifier.diagnostics import (
+    TO_REDACT,
     async_get_config_entry_diagnostics,
 )
 
@@ -36,6 +37,37 @@ async def test_diagnostics_reports_resolved_options(hass: HomeAssistant) -> None
 
     diagnostics = await async_get_config_entry_diagnostics(hass, entry)
 
+    assert diagnostics["loaded"] is True
     assert diagnostics["legacy_service_name"] == "airplay_living_room"
     assert diagnostics["resolved_options"]["media_player"] == MEDIA_PLAYER
     assert diagnostics["resolved_options"]["tts_entity"] == TTS_ENTITY
+    assert diagnostics["entry"]["version"] == 1
+    assert diagnostics["entry"]["minor_version"] == 1
+
+
+async def test_diagnostics_without_runtime_data(hass: HomeAssistant) -> None:
+    """Diagnostics still work for an entry that is not loaded.
+
+    Core deletes `entry.runtime_data` on unload, and a broken entry is
+    exactly when someone downloads diagnostics: reading it unguarded raised
+    `AttributeError` and produced no diagnostics at all.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Living Room",
+        unique_id=MEDIA_PLAYER,
+        data={CONF_MEDIA_PLAYER: MEDIA_PLAYER, CONF_TTS_ENTITY: TTS_ENTITY},
+    )
+    entry.add_to_hass(hass)
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert diagnostics["loaded"] is False
+    assert diagnostics["resolved_options"] is None
+    assert diagnostics["legacy_service_name"] is None
+    assert diagnostics["data"][CONF_MEDIA_PLAYER] == MEDIA_PLAYER
+
+
+async def test_diagnostics_redaction_set_is_documented_empty() -> None:
+    """`TO_REDACT` is deliberately empty; nothing sensitive is ever stored."""
+    assert not TO_REDACT
