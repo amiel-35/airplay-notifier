@@ -16,7 +16,7 @@ message actually gets spoken.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from homeassistant.components.notify.const import DOMAIN as NOTIFY_DOMAIN
 from homeassistant.components.notify.legacy import NOTIFY_SERVICES
@@ -42,7 +42,7 @@ from .const import (
     DEFAULT_STRATEGY,
     DOMAIN,
 )
-from .delivery import AirplayNotifierOptions
+from .delivery import AirplayNotifierOptions, VolumeRestoreState
 
 PLATFORMS: list[Platform] = [Platform.NOTIFY]
 
@@ -53,6 +53,7 @@ class AirplayNotifierRuntimeData:
 
     options: AirplayNotifierOptions
     legacy_service_name: str
+    volume_state: VolumeRestoreState = field(default_factory=VolumeRestoreState)
 
 
 type AirplayNotifierConfigEntry = ConfigEntry[AirplayNotifierRuntimeData]
@@ -121,6 +122,10 @@ async def async_setup_entry(
     )
 
     entry.async_on_unload(entry.add_update_listener(_async_update_options))
+    # A volume restore is scheduled, not awaited: without this the timer
+    # would still fire (and move the player's volume) after the entry, and
+    # possibly the whole integration, is gone.
+    entry.async_on_unload(entry.runtime_data.volume_state.async_cancel_pending_restore)
     entry.async_on_unload(
         lambda: _async_remove_legacy_service(hass, entry.entry_id, legacy_service_name)
     )

@@ -64,6 +64,7 @@ resolves `media-source://` URIs itself before streaming.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Final
@@ -79,7 +80,7 @@ from homeassistant.components.media_player.const import (
 )
 from homeassistant.components.tts.const import DOMAIN as TTS_DOMAIN
 from homeassistant.const import SERVICE_VOLUME_SET
-from homeassistant.core import HomeAssistant, valid_entity_id
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback, valid_entity_id
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv, entity_registry as er
 from homeassistant.helpers.event import async_call_later
@@ -116,6 +117,32 @@ class AirplayNotifierOptions:
     strategy: str = STRATEGY_AUTO
     announce_prefix: str = ""
     deny_domains: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class VolumeRestoreState:
+    """Per-player bookkeeping for the announcement volume window.
+
+    One instance lives on the config entry's runtime data (one entry = one
+    `media_player`), so overlapping announcements on the same player share
+    it. See `_async_deliver_direct` for what each field guards.
+    """
+
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    original_volume: float | None = None
+    cancel_restore: CALLBACK_TYPE | None = None
+
+    @callback
+    def async_cancel_pending_restore(self) -> None:
+        """Cancel the restore timer, if one is armed.
+
+        Registered with `entry.async_on_unload` so an unloaded entry never
+        leaves a timer behind that would move a player's volume minutes
+        later, after the integration is gone.
+        """
+        if self.cancel_restore is not None:
+            self.cancel_restore()
+            self.cancel_restore = None
 
 
 # Per-call `data` payload accepted by the legacy `notify.airplay_<name>`
@@ -322,8 +349,41 @@ async def _async_set_volume(hass: HomeAssistant, entity_id: str, volume: float) 
     )
 
 
+@callback
+def _async_schedule_restore(
+    hass: HomeAssistant,
+    options: AirplayNotifierOptions,
+    state: VolumeRestoreState,
+    message: str,
+) -> None:
+    """(Re)arm the single pending volume restore for this player.
+
+    Must be called with `state.lock` held. Any restore already armed by an
+    earlier, still-overlapping announcement is cancelled first, so exactly
+    one restore ever fires and it always targets the volume the player had
+    *before* the first announcement of the burst.
+    """
+    original = state.original_volume
+    if original is None:
+        return
+
+    state.async_cancel_pending_restore()
+
+    async def _restore(_now: Any) -> None:
+        state.cancel_restore = None
+        state.original_volume = None
+        await _async_set_volume(hass, options.media_player, original)
+
+    state.cancel_restore = async_call_later(
+        hass, _estimate_speech_seconds(message), _restore
+    )
+
+
 async def _async_deliver_direct(
-    hass: HomeAssistant, options: AirplayNotifierOptions, message: str
+    hass: HomeAssistant,
+    options: AirplayNotifierOptions,
+    message: str,
+    state: VolumeRestoreState,
 ) -> None:
     """Speak `message` via `tts.speak` targeting `options.media_player`.
 
@@ -333,38 +393,52 @@ async def _async_deliver_direct(
     (`homeassistant/components/apple_tv/media_player.py:353`) resolves
     `media-source://` URIs before streaming, so no manual resolution is
     needed here.
+
+    The volume window around the announcement is guarded by `state`:
+
+    - `state.lock` serialises the read-then-set of the player volume, so two
+      announcements racing each other cannot interleave between reading the
+      current volume and raising it.
+    - `state.original_volume` is remembered *once* per burst. Without this, a
+      second announcement starting while the first is still speaking would
+      read the already-raised announcement volume and "restore" to it.
+    - the restore is scheduled, never awaited, and its handle is kept so the
+      next overlapping announcement (or an entry unload) can cancel it.
+    - the restore is armed in a `finally`, so a `tts.speak` that raises
+      (unknown engine, player refusing `play_media`, …) does not leave the
+      player stuck at announcement volume.
     """
-    volume = options.volume
-    previous_volume: float | None = None
-    if volume is not None:
-        if options.restore_volume:
-            previous_volume = await _async_get_current_volume(
-                hass, options.media_player
-            )
-        await _async_set_volume(hass, options.media_player, volume)
+    restore = options.volume is not None and options.restore_volume
+
+    if options.volume is not None:
+        async with state.lock:
+            if restore:
+                state.async_cancel_pending_restore()
+                if state.original_volume is None:
+                    state.original_volume = await _async_get_current_volume(
+                        hass, options.media_player
+                    )
+            await _async_set_volume(hass, options.media_player, options.volume)
 
     tts_options = _tts_options(options.voice)
-    await hass.services.async_call(
-        TTS_DOMAIN,
-        "speak",
-        {
-            "entity_id": options.tts_entity,
-            "media_player_entity_id": options.media_player,
-            "message": message,
-            "cache": True,
-            **({"language": options.language} if options.language else {}),
-            **({"options": tts_options} if tts_options else {}),
-        },
-        blocking=True,
-    )
-
-    if volume is not None and options.restore_volume and previous_volume is not None:
-        delay = _estimate_speech_seconds(message)
-
-        async def _restore(_now: Any) -> None:
-            await _async_set_volume(hass, options.media_player, previous_volume)
-
-        async_call_later(hass, delay, _restore)
+    try:
+        await hass.services.async_call(
+            TTS_DOMAIN,
+            "speak",
+            {
+                "entity_id": options.tts_entity,
+                "media_player_entity_id": options.media_player,
+                "message": message,
+                "cache": True,
+                **({"language": options.language} if options.language else {}),
+                **({"options": tts_options} if tts_options else {}),
+            },
+            blocking=True,
+        )
+    finally:
+        if restore:
+            async with state.lock:
+                _async_schedule_restore(hass, options, state, message)
 
 
 async def _async_deliver_music_assistant(
@@ -405,12 +479,20 @@ async def async_deliver_message(
     options: AirplayNotifierOptions,
     message: str,
     data: dict[str, Any] | None = None,
+    *,
+    volume_state: VolumeRestoreState | None = None,
 ) -> None:
     """Speak `message` on `options.media_player`, applying overrides in `data`.
 
     `data` may override, per call: `volume`, `language`, `voice`,
     `tts_entity`. `data.source_entity` is checked against `deny_domains`
     before anything else runs.
+
+    `volume_state` is the config entry's shared `VolumeRestoreState` (from
+    `entry.runtime_data`). Callers should always pass it: it is what makes
+    two overlapping announcements on the same player restore the volume the
+    player had before the *first* of them. A fresh one is created when it is
+    omitted so the function stays usable standalone.
     """
     data = _validate_call_data(data or {})
     _check_deny_list(options, data)
@@ -445,4 +527,9 @@ async def async_deliver_message(
     if strategy == STRATEGY_MUSIC_ASSISTANT:
         await _async_deliver_music_assistant(hass, call_options, full_message)
     else:
-        await _async_deliver_direct(hass, call_options, full_message)
+        await _async_deliver_direct(
+            hass,
+            call_options,
+            full_message,
+            volume_state if volume_state is not None else VolumeRestoreState(),
+        )

@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 import voluptuous as vol
 from homeassistant.components.notify.legacy import NOTIFY_SERVICES
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
+    async_fire_time_changed,
     async_mock_service,
 )
 
@@ -246,6 +250,41 @@ async def test_legacy_service_re_registers_after_reload(hass: HomeAssistant) -> 
 
     assert hass.services.has_service("notify", "airplay_living_room")
     assert len(hass.data[NOTIFY_SERVICES][DOMAIN]) == 1
+
+
+async def test_no_volume_restore_timer_survives_unload(hass: HomeAssistant) -> None:
+    """Unloading the entry disarms the pending volume restore.
+
+    The restore is scheduled, not awaited, so without an
+    `entry.async_on_unload` hook it would still fire seconds later and move
+    the speaker's volume on behalf of an integration that is no longer there.
+    """
+    hass.states.async_set(MEDIA_PLAYER, "idle", {"volume_level": 0.3})
+
+    entry = _make_entry()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    async_mock_service(hass, "tts", "speak")
+    volume_calls = async_mock_service(hass, "media_player", "volume_set")
+
+    await hass.services.async_call(
+        "notify",
+        "airplay_living_room",
+        {"message": "Loud", "data": {"volume": 0.9}},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+    assert len(volume_calls) == 1
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=30))
+    await hass.async_block_till_done()
+
+    assert len(volume_calls) == 1
 
 
 async def test_async_get_service_without_discovery_info(hass: HomeAssistant) -> None:

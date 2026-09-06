@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
@@ -23,6 +24,7 @@ from custom_components.airplay_notifier.const import (
 from custom_components.airplay_notifier.delivery import (
     AirplayNotifierOptions,
     AnnouncementDenied,
+    VolumeRestoreState,
     async_deliver_message,
 )
 
@@ -294,6 +296,118 @@ async def test_volume_not_restored_when_disabled(hass: HomeAssistant) -> None:
     await hass.async_block_till_done()
 
     assert len(volume_calls) == 1
+
+
+def _mock_volume_set(hass: HomeAssistant, player: str) -> list[ServiceCall]:
+    """Mock `media_player.volume_set` and make it move the player's state.
+
+    A plain `async_mock_service` would leave `volume_level` frozen, which is
+    exactly what hides the overlapping-announcement bug: the second call
+    would keep reading the *pre-announcement* volume by accident.
+    """
+    calls: list[ServiceCall] = []
+
+    async def _handler(call: ServiceCall) -> None:
+        calls.append(call)
+        state = hass.states.get(player)
+        attributes = dict(state.attributes) if state is not None else {}
+        attributes["volume_level"] = call.data["volume_level"]
+        hass.states.async_set(
+            player, state.state if state is not None else "idle", attributes
+        )
+
+    hass.services.async_register("media_player", "volume_set", _handler)
+    return calls
+
+
+async def test_volume_is_restored_when_speaking_fails(hass: HomeAssistant) -> None:
+    """A failing `tts.speak` still gives the player its volume back.
+
+    Without the `try/finally` the restore was simply skipped and the speaker
+    stayed at announcement volume until someone noticed.
+    """
+    hass.states.async_set(DIRECT_PLAYER, "idle", {"volume_level": 0.3})
+    async_mock_service(
+        hass, "tts", "speak", raise_exception=HomeAssistantError("engine exploded")
+    )
+    volume_calls = _mock_volume_set(hass, DIRECT_PLAYER)
+
+    with pytest.raises(HomeAssistantError):
+        await async_deliver_message(hass, _options(volume=0.9), "Loud")
+    await hass.async_block_till_done()
+
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=30))
+    await hass.async_block_till_done()
+
+    assert [call.data["volume_level"] for call in volume_calls] == [0.9, 0.3]
+
+
+async def test_overlapping_announcements_restore_the_original_volume(
+    hass: HomeAssistant,
+) -> None:
+    """Two overlapping announcements end at the volume before the first one.
+
+    Each call used to read the current volume for itself and schedule its own
+    restore without cancelling anyone else's. The second call therefore
+    captured the *announcement* volume (0.9) and, firing last, "restored" the
+    speaker to it permanently.
+    """
+    hass.states.async_set(DIRECT_PLAYER, "idle", {"volume_level": 0.3})
+    volume_calls = _mock_volume_set(hass, DIRECT_PLAYER)
+
+    speaking = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _speak(call: ServiceCall) -> None:
+        speaking.set()
+        await release.wait()
+
+    hass.services.async_register("tts", "speak", _speak)
+
+    state = VolumeRestoreState()
+    first = hass.async_create_task(
+        async_deliver_message(hass, _options(volume=0.9), "First", volume_state=state)
+    )
+    await speaking.wait()
+
+    # The second announcement starts while the first is still speaking.
+    speaking.clear()
+    second = hass.async_create_task(
+        async_deliver_message(hass, _options(volume=0.9), "Second", volume_state=state)
+    )
+    await speaking.wait()
+
+    release.set()
+    await first
+    await second
+    await hass.async_block_till_done()
+
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=30))
+    await hass.async_block_till_done()
+
+    assert hass.states.get(DIRECT_PLAYER).attributes["volume_level"] == 0.3
+    # Exactly one restore fired, not one per announcement.
+    assert [call.data["volume_level"] for call in volume_calls] == [0.9, 0.9, 0.3]
+
+
+async def test_pending_restore_can_be_cancelled(hass: HomeAssistant) -> None:
+    """`async_cancel_pending_restore` disarms the timer (used on entry unload)."""
+    hass.states.async_set(DIRECT_PLAYER, "idle", {"volume_level": 0.3})
+    async_mock_service(hass, "tts", "speak")
+    volume_calls = _mock_volume_set(hass, DIRECT_PLAYER)
+
+    state = VolumeRestoreState()
+    await async_deliver_message(hass, _options(volume=0.9), "Loud", volume_state=state)
+    await hass.async_block_till_done()
+    assert state.cancel_restore is not None
+
+    state.async_cancel_pending_restore()
+    assert state.cancel_restore is None
+
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=30))
+    await hass.async_block_till_done()
+
+    assert [call.data["volume_level"] for call in volume_calls] == [0.9]
 
 
 async def test_auto_strategy_detects_music_assistant(hass: HomeAssistant) -> None:

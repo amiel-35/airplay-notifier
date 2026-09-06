@@ -115,7 +115,13 @@ class AirplayNotifierNotificationService(BaseNotificationService):
         runtime_data = _async_live_runtime_data(self.hass, self.entry_id)
         data = dict(kwargs.get(ATTR_DATA) or {})
         try:
-            await async_deliver_message(self.hass, runtime_data.options, message, data)
+            await async_deliver_message(
+                self.hass,
+                runtime_data.options,
+                message,
+                data,
+                volume_state=runtime_data.volume_state,
+            )
         except AnnouncementDenied:
             # Logged here *and* re-raised: a refusal must be visible in the
             # log (the automation author may never look at the service call
@@ -165,4 +171,9 @@ class AirplayNotifierEntity(NotifyEntity):
         a `source_entity` that this surface has no way to carry.
         """
         runtime_data = _async_live_runtime_data(self.hass, self._entry_id)
-        await async_deliver_message(self.hass, runtime_data.options, message)
+        await async_deliver_message(
+            self.hass,
+            runtime_data.options,
+            message,
+            volume_state=runtime_data.volume_state,
+        )
