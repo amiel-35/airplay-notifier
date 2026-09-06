@@ -138,6 +138,9 @@ class VolumeRestoreState:
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     original_volume: float | None = None
     cancel_restore: CALLBACK_TYPE | None = None
+    # The player a pending restore targets, so the unload hook can perform
+    # the restore without a copy of the entry's options.
+    restore_target: str | None = None
 
     @callback
     def async_cancel_pending_restore(self) -> None:
@@ -433,11 +436,23 @@ def _async_schedule_restore(
         return
 
     state.async_cancel_pending_restore()
+    state.restore_target = options.media_player
 
     async def _restore(_now: Any) -> None:
+        """Give the player back the volume it had before the burst.
+
+        Everything here runs *inside* `state.lock`, and `original_volume`
+        is only cleared once the speaker has actually come back down.
+        Without both, an announcement starting while this restore was in
+        flight would find `original_volume` already `None`, read the
+        player's still-raised level as the "original", and later restore
+        the speaker to the *announcement* volume — stuck loud.
+        """
         state.cancel_restore = None
-        state.original_volume = None
-        await _async_set_volume(hass, options.media_player, original)
+        async with state.lock:
+            await _async_set_volume(hass, options.media_player, original)
+            state.original_volume = None
+            state.restore_target = None
 
     state.cancel_restore = async_call_later(
         hass, _estimate_speech_seconds(message), _restore
@@ -469,6 +484,9 @@ async def _async_deliver_direct(
       read the already-raised announcement volume and "restore" to it.
     - the restore is scheduled, never awaited, and its handle is kept so the
       next overlapping announcement (or an entry unload) can cancel it.
+    - the restore itself also takes `state.lock` before touching the volume,
+      so an announcement starting while a restore is in flight waits for the
+      speaker to be back down before reading the "original" volume.
     - the restore is armed in a `finally`, so a `tts.speak` that raises
       (unknown engine, player refusing `play_media`, …) does not leave the
       player stuck at announcement volume.

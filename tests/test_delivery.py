@@ -447,6 +447,70 @@ async def test_overlapping_announcements_restore_the_original_volume(
     assert [call.data["volume_level"] for call in volume_calls] == [0.9, 0.9, 0.3]
 
 
+async def test_announcement_during_an_in_flight_restore_waits_for_it(
+    hass: HomeAssistant,
+) -> None:
+    """A restore already in flight is finished before the next announcement reads.
+
+    The restore used to call `media_player.volume_set` *outside* `state.lock`,
+    and cleared `original_volume` before the speaker had actually come down.
+    A second announcement starting in that window therefore read the
+    announcement volume (0.9) as the "original" and, when its own restore
+    fired, left the speaker stuck loud for good.
+    """
+    hass.states.async_set(DIRECT_PLAYER, "idle", {"volume_level": 0.3})
+    async_mock_service(hass, "tts", "speak")
+
+    levels: list[float] = []
+    restore_in_flight = asyncio.Event()
+    let_restore_finish = asyncio.Event()
+
+    async def _volume_set(call: ServiceCall) -> None:
+        level = call.data["volume_level"]
+        levels.append(level)
+        if level == 0.3 and not restore_in_flight.is_set():
+            # The restore has been dispatched but the speaker has not
+            # actually come down yet: exactly the window the bug lived in.
+            restore_in_flight.set()
+            await let_restore_finish.wait()
+        attributes = dict(hass.states.get(DIRECT_PLAYER).attributes)
+        attributes["volume_level"] = level
+        hass.states.async_set(DIRECT_PLAYER, "idle", attributes)
+
+    hass.services.async_register("media_player", "volume_set", _volume_set)
+
+    state = VolumeRestoreState()
+    await async_deliver_message(hass, _options(volume=0.9), "First", volume_state=state)
+    await hass.async_block_till_done()
+    assert levels == [0.9]
+
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=30))
+    await restore_in_flight.wait()
+
+    second = hass.async_create_task(
+        async_deliver_message(hass, _options(volume=0.9), "Second", volume_state=state)
+    )
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+    # It must be parked on the lock, not reading 0.9 as the original volume.
+    assert levels == [0.9, 0.3]
+
+    let_restore_finish.set()
+    await second
+    await hass.async_block_till_done()
+
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=30))
+    await hass.async_block_till_done()
+
+    # One restore per announcement, both to the *true* original, and the
+    # speaker ends where it started.
+    assert levels == [0.9, 0.3, 0.9, 0.3]
+    assert hass.states.get(DIRECT_PLAYER).attributes["volume_level"] == 0.3
+    assert state.cancel_restore is None
+    assert state.original_volume is None
+
+
 @pytest.mark.parametrize(
     ("attributes", "state_exists"),
     [
