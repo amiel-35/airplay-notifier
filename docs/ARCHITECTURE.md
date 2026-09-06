@@ -155,8 +155,8 @@ The task specifies calling `music_assistant.play_announcement` directly, so
 this integration resolves the TTS message to a real HTTP(S) URL itself,
 before calling that action, using the same sequence Home Assistant's own
 `assist_satellite` entity uses for the identical problem
-(`homeassistant/components/assist_satellite/entity.py`, around line
-655-696):
+(`homeassistant/components/assist_satellite/entity.py`,
+`AssistSatelliteEntity._resolve_announcement_media_id`, lines 638-700):
 
 1. `homeassistant.components.tts.generate_media_source_id(hass, message,
    engine=tts_entity, language=..., options=..., cache=True)` — re-exported
