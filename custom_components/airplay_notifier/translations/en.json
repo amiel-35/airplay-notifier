@@ -55,7 +55,7 @@
       "message": "Cannot speak: the target is a Music Assistant player but 'music_assistant.play_announcement' is unavailable, and 'tts.speak' is unavailable too."
     },
     "source_domain_denied": {
-      "message": "Refused to speak on behalf of {source_entity}: the domain '{domain}' is in the denied source domains ({deny_domains})."
+      "message": "Refused to speak on behalf of {source_entity}: the domain {domain} is in the denied source domains ({deny_domains})."
     }
   },
   "selector": {
