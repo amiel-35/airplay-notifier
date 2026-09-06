@@ -15,13 +15,6 @@
       "already_configured": "This media player is already configured."
     }
   },
-  "entity": {
-    "notify": {
-      "speak": {
-        "name": "Speak"
-      }
-    }
-  },
   "options": {
     "step": {
       "init": {

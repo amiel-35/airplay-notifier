@@ -15,13 +15,6 @@
       "already_configured": "Este reproductor multimedia ya está configurado."
     }
   },
-  "entity": {
-    "notify": {
-      "speak": {
-        "name": "Hablar"
-      }
-    }
-  },
   "options": {
     "step": {
       "init": {

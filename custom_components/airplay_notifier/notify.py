@@ -157,11 +157,20 @@ class AirplayNotifierEntity(NotifyEntity):
     `notify.<player>` entity ids instead of `notify.speak` and
     `notify.speak_2`, which is what the previous hard-coded `_attr_name =
     "Speak"` produced.
+
+    There is deliberately no `_attr_translation_key`: `_attr_name = None`
+    wins over it. `Entity._name_internal`
+    (`homeassistant/helpers/entity.py:720` in 2026.9.1) starts with `if
+    hasattr(self, "_attr_name"): return self._attr_name`, and declaring
+    `_attr_name = None` on the class makes that `hasattr` true — the
+    `name_translation_key` lookup on the next branch is never reached. A
+    translation key here would be dead weight promising a name the entity
+    can never use, so the `entity.notify.speak` section was removed from
+    strings.json and all three translations too.
     """
 
     _attr_has_entity_name = True
     _attr_name = None
-    _attr_translation_key = "speak"
     _attr_supported_features = NotifyEntityFeature.TITLE
 
     def __init__(self, entry: ConfigEntry) -> None:

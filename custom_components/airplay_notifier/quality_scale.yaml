@@ -181,8 +181,16 @@ rules:
     status: exempt
     comment: The single entity is the point of the integration.
   entity-translations:
-    status: done
-    comment: An entity section is declared in strings.json and all translations.
+    status: exempt
+    comment: >-
+      The single entity is named after its device (_attr_has_entity_name
+      with _attr_name = None), which is the intent: one entry is one player,
+      and the entity should read as that player. Entity._name_internal
+      returns _attr_name before it ever looks a translation key up, so an
+      entity.notify.* section would be dead weight; it was removed from
+      strings.json and the three translations rather than left as a promise
+      the entity cannot keep. Everything the user does see — config and
+      options steps, selectors, exception messages — is translated.
   exception-translations:
     status: done
   icon-translations:

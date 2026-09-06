@@ -359,8 +359,13 @@ time), holding one `NotifyEntity`. That entity is the device's main entity,
 so it sets `_attr_has_entity_name = True` with `_attr_name = None` and
 takes the device's name: `notify.living_room`, not the `notify.speak` /
 `notify.speak_2` collision a hard-coded entity name produced across two
-entries. `_attr_translation_key = "speak"` backs the `entity` section
-declared in `strings.json` and every translation file.
+entries. There is deliberately **no** `_attr_translation_key` and no
+`entity` section in `strings.json`: `Entity._name_internal`
+(`homeassistant/helpers/entity.py`) opens with `if hasattr(self,
+"_attr_name"): return self._attr_name`, and declaring `_attr_name = None`
+makes that `hasattr` true, so the translation lookup on the next branch is
+never reached. A translation key there would promise a name the entity can
+never display.
 
 ## Manifest classification
 
