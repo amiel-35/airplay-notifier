@@ -19,7 +19,7 @@ jobs:
         run: zip -r ${{ github.workspace }}/airplay_notifier.zip . -x '.*'
 
       - name: Create GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: airplay_notifier.zip
           generate_release_notes: true
