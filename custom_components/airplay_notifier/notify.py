@@ -21,7 +21,7 @@ resolves the delivery strategy and speaks it — but only the legacy service
 can carry per-call `data` overrides and the `source_entity` the deny-list
 checks. Home Assistant's own `notify.send_message` entity service schema
 (`homeassistant/components/notify/__init__.py`,
-`component.async_register_entity_service(SERVICE_SEND_MESSAGE, {...})`,
+core's entity-service registration for `SEND_MESSAGE`,
 around line 84-91) accepts only `message` and `title` — no generic `data`
 field — so the `NotifyEntity` path always speaks with the entry's
 configured defaults and can never carry a `source_entity` to check against
