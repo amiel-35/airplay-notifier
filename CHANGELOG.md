@@ -29,22 +29,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Deny-list: a call whose `data.source_entity` belongs to a denied domain
   (`alarm_control_panel`, `lock` by default) is refused with a translated
   `ServiceValidationError` and logged, never spoken. `source_entity` is
-  normalised (list/tuple, case, whitespace) before the check, and a value
-  that is not a usable `domain.object_id` is refused rather than ignored.
+  normalised (list, tuple, set, case, whitespace) before the check, and a
+  value that is not a usable `domain.object_id` is refused rather than
+  ignored.
 - Per-call `data` overrides — `volume`, `language`, `voice`, `tts_entity` —
   validated by a voluptuous schema that also rejects unknown keys.
 - Volume set/restore around Direct-strategy announcements: the original
   volume is remembered once per burst of overlapping announcements, exactly
-  one restore is ever armed, it is armed even when speaking fails, and it is
-  cancelled when the config entry unloads.
+  one restore is ever armed, it is armed even when speaking fails, it runs
+  inside the same lock the announcements take (so a call starting during an
+  in-flight restore cannot mistake announcement volume for the original),
+  and unloading or reloading the config entry performs it immediately
+  rather than dropping it.
 - One service device per config entry, holding a single `notify.<player>`
   entity.
 - Diagnostics (redaction plumbing with a documented empty `TO_REDACT`),
-  `async_migrate_entry`, translations (`en`, `fr`, `es`), a
-  `quality_scale.yaml` self-assessment and `docs/known-issues.md`.
+  `async_migrate_entry` (refusing both major and minor downgrades),
+  translations (`en`, `fr`, `es`), a `quality_scale.yaml` self-assessment
+  and `docs/known-issues.md`.
 - Tests for the config flow, both notify surfaces, the delivery strategies
   and their failure modes, the real TTS URL resolution, diagnostics, the
-  manifest, and translation key parity.
+  manifest, translation key parity, and hassfest's translation *value*
+  rules (no placeholder inside single quotes, valid placeholder
+  identifiers, no stray braces).
 
 [Unreleased]: https://github.com/amiel-35/airplay-notifier/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/amiel-35/airplay-notifier/releases/tag/v0.1.0

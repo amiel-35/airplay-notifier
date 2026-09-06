@@ -94,8 +94,29 @@ name in `alert.notifiers:` must be updated.
 A deny-list refusal (or an invalid `data` payload) raises
 `ServiceValidationError`, which fails the automation or script that called
 it, in addition to being logged. That is deliberate — a silently ignored
-announcement is worse than a visible failure — but it does mean an `alert`
-whose `notifiers:` includes a refused call will report an error.
+announcement is worse than a visible failure.
+
+### Under `alert`, one refusal produces two log lines
+
+The core `alert` integration calls its notifiers *without* `blocking=True`
+and catches only `ServiceNotFound`
+(`homeassistant/components/alert/entity.py`, `_send_notification_message`).
+Home Assistant therefore runs the call as a background task and reports the
+refusal itself, on top of ours. A single refused announcement reached from
+an `alert` logs, in order:
+
+1. `WARNING homeassistant.components.airplay_notifier.notify: Refused to
+   speak notification on media_player.…` — ours, one line, no traceback;
+2. `ERROR homeassistant.core: Error executing service: <ServiceCall
+   notify.airplay_…>` — core's, with a full `ServiceValidationError`
+   traceback, from `HomeAssistant._run_service_call_catch_exceptions`
+   (`homeassistant/core.py`).
+
+Both are expected and describe the same refusal; the traceback is noise, not
+a crash. Note the corollary: because that call is not blocking, the refusal
+does **not** fail the alert — the alert carries on and retries at its next
+notification interval. A refusal only fails its caller when the caller
+awaits the service call, which automations and scripts do.
 
 ## Spanish translations are machine-translated
 
