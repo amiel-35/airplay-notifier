@@ -43,14 +43,18 @@ Everything else is tunable afterward from the entry's **Configure** option:
 |---|---|---|
 | Language | engine default | Language code passed to the TTS engine. |
 | Voice | engine default | Engine-specific voice identifier. |
-| Volume | `0.6` | 0 (silent) to 1 (maximum). |
+| Volume | `0.6` | 0 (silent) to 1 (maximum). Music Assistant cannot announce at 0 and clamps to 1 % — see [known issues](docs/known-issues.md). |
 | Restore volume after speaking | on | Direct strategy only — Music Assistant restores its own announcement volume. |
 | Delivery strategy | Auto | Auto detects Music Assistant players; Music Assistant / Direct force a path. |
 | Announcement prefix | *(none)* | Spoken before every message, e.g. a chime word. |
 | Denied source domains | `alarm_control_panel, lock` | A call whose `data.source_entity` is in one of these domains is refused and logged — never spoken. |
 
 Per-call `data` overrides (legacy `notify.airplay_<name>` service only —
-see below): `volume`, `language`, `voice`, `tts_entity`.
+see below): `volume` (0-1), `language`, `voice` (a voice id, or a mapping
+passed to the engine as its full `options` payload), `tts_entity` (a `tts.*`
+entity id). The payload is schema-validated: an out-of-range volume, a
+`tts_entity` from the wrong domain or an unknown key fails the call with a
+clear error instead of being ignored.
 
 ## Examples
 
@@ -104,9 +108,15 @@ automation:
             source_entity: alarm_control_panel.home
 ```
 
-This call is refused and logged (`custom_components.airplay_notifier:
-debug` in `logger:` shows why) instead of announcing the alarm's state —
-`alarm_control_panel` is in `deny_domains` by default.
+This call is refused instead of announcing the alarm's state —
+`alarm_control_panel` is in `deny_domains` by default. The refusal is
+logged as a warning *and* raised as an error that fails the calling action,
+so it cannot pass unnoticed.
+
+`source_entity` is normalised before the check: a list, a tuple, or any
+capitalisation all work. A value that is not a usable `domain.object_id` is
+**refused**, not ignored — if the provenance of a message cannot be
+checked, it is not spoken.
 
 Note: `data.source_entity` (and the other per-call overrides) only work
 through the legacy `notify.airplay_<name>` service. Home Assistant's modern
@@ -130,6 +140,23 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the verified details
 of both paths — in particular, why the Music Assistant strategy needs to
 resolve the TTS URL itself rather than handing Music Assistant a
 `media-source://` identifier.
+
+## Known limitations
+
+Read [`docs/known-issues.md`](docs/known-issues.md) before filing a bug: it
+lists what this integration deliberately does not do and why — per-call
+`data` being legacy-service-only, the volume restore being a timed estimate,
+Music Assistant's inability to announce at volume 0, and the case where the
+TTS clip URL is served on your external URL.
+[`quality_scale.yaml`](custom_components/airplay_notifier/quality_scale.yaml)
+is the wider self-assessment against Home Assistant's Integration Quality
+Scale, gaps included.
+
+## Translations
+
+English and French are written by the maintainer. **Spanish
+(`translations/es.json`) is machine translated** — contributions from
+Spanish speakers are very welcome, as are new languages.
 
 ## Development
 

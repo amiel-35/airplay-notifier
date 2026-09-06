@@ -37,6 +37,44 @@ Both call into `delivery.async_deliver_message` with the same
 `AirplayNotifierOptions`, so behavior never diverges between them (see
 `__init__.py: AirplayNotifierRuntimeData`).
 
+### Neither surface may cache its options
+
+`BaseNotificationService.async_register_services`
+(`homeassistant/components/notify/legacy.py`) ends with:
+
+```python
+if self.hass.services.has_service(DOMAIN, self._service_name):
+    return
+```
+
+`async_setup_entry` re-dispatches `discovery.async_load_platform` on every
+setup, and `async_load_platform` sends its dispatcher signal
+unconditionally (`homeassistant/helpers/discovery.py`, around line
+137-175), so a reload really does call `async_get_service` again and build
+a fresh service object — but that object is never wired to
+`notify.airplay_<name>`, because the service already exists. The **first**
+instance keeps answering the service for the lifetime of the Home Assistant
+process.
+
+Consequently both `AirplayNotifierNotificationService` and
+`AirplayNotifierEntity` store only the `entry_id` and resolve
+`hass.config_entries.async_get_entry(entry_id).runtime_data` on every
+`async_send_message` (`notify._async_live_runtime_data`). Anything captured
+by value at construction time would be frozen at first setup and no options
+change would ever take effect.
+
+### Unload has to undo the legacy registration by hand
+
+The same module has no unload path for a discovery-registered platform: it
+appends to `hass.data[NOTIFY_SERVICES][<integration>]` (the `NOTIFY_SERVICES`
+`HassKey`, literally `notify_services`) and only removes services through
+`async_reset_platform`, which the config-entry lifecycle never calls for us.
+`async_setup_entry` therefore registers an `entry.async_on_unload` hook
+(`_async_remove_legacy_service`) that removes the service and drops this
+entry's instance from `hass.data`. Without it an unloaded entry leaves a
+live service pointing at a dead entry, and every reload leaks one more
+instance.
+
 ## Delivery strategies
 
 ### Strategy selection (`auto`)
@@ -50,6 +88,19 @@ set up the entity (`class RegistryEntry`, `platform: str = attr.ib()`,
 around line 217). If `platform == "music_assistant"`, the Music Assistant
 strategy is used; otherwise, Direct. `strategy: music_assistant` or
 `strategy: direct` in the options bypasses this detection entirely.
+
+### Availability check (`_async_usable_strategy`)
+
+`music_assistant` is an `after_dependencies` entry in the manifest, not a
+hard dependency, so the target player can be registered to the
+`music_assistant` platform while the integration itself is not loaded — not
+set up yet during startup, unloaded, or in a failed setup retry. The
+resolved strategy is therefore checked against
+`hass.services.has_service("music_assistant", "play_announcement")` before
+use: if the action is missing, the call falls back to Direct with a warning
+(the announcement still happens), and only if `tts.speak` is missing too
+does it raise a translated `no_delivery_path` error. Previously this failed
+with a bare `ServiceNotFound`.
 
 ### Direct strategy: `tts.speak`
 
@@ -108,10 +159,17 @@ before calling that action, using the same sequence Home Assistant's own
 655-696):
 
 1. `homeassistant.components.tts.generate_media_source_id(hass, message,
-   engine=tts_entity, language=..., options=...)` — re-exported from
-   `homeassistant/components/tts/media_source.py`
+   engine=tts_entity, language=..., options=..., cache=True)` — re-exported
+   from `homeassistant/components/tts/media_source.py`
    (`generate_media_source_id`) — builds the
-   `media-source://tts/<engine>?message=...` identifier.
+   `media-source://tts/<engine>?message=...&cache=true` identifier.
+   `cache=True` is passed explicitly so this path uses the same TTS file
+   cache the Direct path gets from `tts.speak`'s `cache: true`:
+   `generate_media_source_id` encodes it in the identifier and
+   `parse_media_source_id` turns it back into the `use_file_cache` flag on
+   the `ResultStream`. Omitting it leaves the flag at `None` (engine
+   default), so the two strategies would disagree about caching identical
+   text.
 2. `homeassistant.components.media_source.async_resolve_media(hass,
    media_content_id, target_media_player)` — `async_resolve_media` at
    `homeassistant/components/media_source/helper.py:115` — resolves it to a
@@ -123,6 +181,23 @@ before calling that action, using the same sequence Home Assistant's own
    back at this Home Assistant instance, so an external device (the Music
    Assistant server, potentially off-box) can fetch it without
    authenticating.
+
+   **Which hostname that is, is not this integration's choice.** To make the
+   path absolute the helper calls
+   `homeassistant.helpers.network.get_url(hass)` (same file, around line
+   71-90), which walks `[internal, external]` and returns whichever it can
+   resolve — so with no internal URL configured, the signed
+   `/api/tts_proxy/...` link is built on the **external** URL and the clip
+   is reachable from outside the LAN for the lifetime of the signature
+   (`CONTENT_AUTH_EXPIRY_TIME`). Worse, `get_url` *reverses* that order
+   outright when Home Assistant's own API is served over SSL
+   (`prefer_external = hass.config.api is not None and
+   hass.config.api.use_ssl`, `homeassistant/helpers/network.py:133-141`),
+   so an SSL-terminating instance prefers the external URL even when an
+   internal one exists. Configuring an internal URL in Settings → System →
+   Network is the only way to keep the clip on the LAN. The Direct strategy
+   never hits this: `tts.speak` hands the media-source id to the player,
+   which resolves it locally. Recorded in `docs/known-issues.md`.
 
 Only then is `music_assistant.play_announcement` called, with that URL.
 Music Assistant's own `announce_volume` field
@@ -157,6 +232,34 @@ restore via `homeassistant.helpers.event.async_call_later`
 immediately — nothing in this integration blocks the event loop waiting for
 a player to finish talking.
 
+### `VolumeRestoreState`: what a scheduled restore has to survive
+
+Scheduling rather than awaiting means the volume window outlives the call
+that opened it, and three things can happen inside it. All three are
+handled by one `VolumeRestoreState` per config entry (one entry = one
+player), living on `entry.runtime_data`:
+
+- **the announcement fails.** `tts.speak` can raise (unknown engine, a
+  player that refuses `play_media`). The restore is armed in a `finally`,
+  so a failed announcement never leaves the speaker at announcement volume.
+- **a second announcement starts while the first is still speaking.** Each
+  call reading the current volume for itself meant the second one captured
+  the *announcement* volume; whichever restore fired last then made that
+  permanent. `state.original_volume` is now filled in only when it is
+  `None`, i.e. once per burst, behind `state.lock` — which also serialises
+  the read-then-set so two calls cannot interleave between them.
+- **restores stack.** `async_call_later` returns a cancel callback that was
+  being discarded, so every overlapping announcement armed its own restore
+  and they all fired. Exactly one is armed at a time
+  (`_async_schedule_restore` cancels the previous one first), and the
+  handle is registered with `entry.async_on_unload`
+  (`VolumeRestoreState.async_cancel_pending_restore`) so unloading the
+  entry disarms it instead of moving a player's volume on behalf of an
+  integration that is gone.
+
+The Music Assistant strategy needs none of this: `announce_volume` is
+handled inside Music Assistant's own player library.
+
 ## Per-call overrides are legacy-service-only
 
 `data.volume`, `data.language`, `data.voice`, `data.tts_entity`, and
@@ -177,6 +280,17 @@ there is no way to smuggle extra fields through this action. Consequently,
 check and can never raise `AnnouncementDenied` — the deny-list is only ever
 exercised through the legacy service path.
 
+## Per-call `data` validation
+
+`delivery.CALL_DATA_SCHEMA` validates the whole payload before anything
+runs: `volume` as a float coerced into 0-1, `language` as a string, `voice`
+as either a voice id or a full TTS `options` mapping, `tts_entity` through
+`cv.entity_domain("tts")`. Unknown keys are rejected (voluptuous'
+`PREVENT_EXTRA` default) so a typo such as `volumne:` fails the call rather
+than being ignored and playing at the wrong volume. A schema failure
+becomes a `ServiceValidationError` with the `invalid_call_data` translation
+key, carrying the voluptuous message as a placeholder.
+
 ## Deny-list ("security is never spoken")
 
 `delivery._check_deny_list` inspects `data.source_entity`, if the caller
@@ -187,6 +301,39 @@ cause an alarm state or a lock's state to be read aloud. There is no
 override for this at call time — silencing it requires changing
 `deny_domains` in the options, a deliberate, visible configuration change.
 
+### Normalisation is part of the check, not a nicety
+
+`source_entity` is caller-supplied and arrives in whatever shape an
+automation produces. A raw comparison against `deny_domains` let three
+shapes through:
+
+- a **list** — the shape every Home Assistant `entity_id` field accepts —
+  because `"." not in ["lock.front_door"]` is true, so the check returned
+  having done nothing;
+- any **capitalisation**, because entity domains are lower-case;
+- a **non-string**, which raised `TypeError` deep inside delivery.
+
+`_normalise_source_entities` therefore runs `cv.ensure_list` → `str()` →
+`.strip().casefold()` over the value and validates each result with
+`homeassistant.core.valid_entity_id`; `deny_domains` entries are casefolded
+too. Anything that is not a usable `domain.object_id` is **refused**, not
+ignored: a message whose provenance cannot be checked is precisely what the
+deny-list exists to stop.
+
+### Refusals are errors, not silence
+
+`AnnouncementDenied` subclasses `ServiceValidationError`
+(`homeassistant/exceptions.py`), which Home Assistant renders to the user
+without a stack trace, and every instance carries a `translation_key`
+resolved from the `exceptions` section of `strings.json`
+(`invalid_source_entity`, `source_domain_denied`; also `invalid_call_data`,
+`entry_not_loaded`, `no_delivery_path`). The legacy notify service logs a
+warning **and** re-raises, so the refusal is both visible in the log and
+fails the calling automation. A silently dropped announcement is a worse
+failure mode than a loud one — with the consequence, noted in
+`docs/known-issues.md`, that an `alert` listing a refused notifier reports
+an error.
+
 ## Config flow / options flow split
 
 `media_player` and `tts_entity` are fixed at setup time (they are the
@@ -196,6 +343,45 @@ player's friendly name at creation time). Everything else — language,
 voice, volume, restore behavior, strategy override, announce prefix, and
 the deny-list — is tunable afterward from the options flow without
 recreating the entry.
+
+`VERSION = 1` and `MINOR_VERSION = 1` are both declared, with a no-op
+`async_migrate_entry` in `__init__.py`. Core refuses to load an entry whose
+stored version is newer than the handler's, so declaring both from the
+start means a downgrade fails as a migration error rather than loading with
+unknown keys, and the first real schema change is a one-file edit.
+
+## Entities, devices and naming
+
+Each config entry creates one **service device**
+(`DeviceEntryType.SERVICE`, identifiers `{(DOMAIN, entry.entry_id)}`, named
+after the entry title — the target player's friendly name at creation
+time), holding one `NotifyEntity`. That entity is the device's main entity,
+so it sets `_attr_has_entity_name = True` with `_attr_name = None` and
+takes the device's name: `notify.living_room`, not the `notify.speak` /
+`notify.speak_2` collision a hard-coded entity name produced across two
+entries. `_attr_translation_key = "speak"` backs the `entity` section
+declared in `strings.json` and every translation file.
+
+## Manifest classification
+
+`integration_type: helper` and `iot_class: calculated`. This integration
+does not talk to any hardware or service of its own: it derives a notify
+surface from a `media_player` and a `tts` entity that other integrations
+already provide, and computes its behaviour from their state. `device` /
+`local_push` claimed a device that does not exist and push updates that are
+never received.
+
+## Diagnostics
+
+`TO_REDACT` is empty *and applied*. Nothing sensitive is ever stored — no
+credentials, no tokens, and a spoken message is never kept anywhere this
+integration can report — so there is nothing to redact today; keeping
+`async_redact_data` in the path means the day something sensitive does
+appear, redacting it is one line in a set rather than a change of shape.
+`entry.runtime_data` is read through `getattr`, because core deletes that
+attribute on unload (`homeassistant/config_entries.py`,
+`object.__delattr__(self, "runtime_data")`) and a broken entry is exactly
+when someone downloads diagnostics.
 
 ## Not implemented / open questions
 
@@ -214,3 +400,13 @@ recreating the entry.
   integration's own `PLAY_MEDIA` support and its own media-source
   resolution, which this integration does not control and has not audited
   integration-by-integration.
+- **Availability and repair issues**: the notify entity is always
+  available, and neither setup nor runtime checks that the target
+  `media_player` and TTS entity still exist.
+- **Reconfiguration**: `media_player` and `tts_entity` cannot be changed on
+  an existing entry.
+
+See [`known-issues.md`](known-issues.md) for the user-facing version of
+these, and
+[`quality_scale.yaml`](../custom_components/airplay_notifier/quality_scale.yaml)
+for the full rule-by-rule self-assessment.

@@ -1,0 +1,214 @@
+# Self-assessment against Home Assistant's Integration Quality Scale.
+#
+# This is a custom (HACS) integration, so `quality_scale` is deliberately
+# absent from manifest.json — that key is meaningful for core integrations
+# only, and hassfest skips this file entirely for non-core integrations
+# (`script/hassfest/quality_scale.py`, `validate_iqs_file`: `if not
+# integration.core: return`). It is kept here as an honest, reviewable
+# statement of where the integration actually stands, in the format core
+# uses, so the gaps are visible instead of implied.
+#
+# Statuses: done | todo | exempt (with a reason).
+
+rules:
+  # Bronze
+  action-setup:
+    status: exempt
+    comment: >-
+      No integration-level actions are registered. The legacy
+      notify.airplay_<name> service is created by core's notify platform
+      machinery from a config entry, and the modern surface is an entity
+      service owned by the notify component.
+  appropriate-polling:
+    status: exempt
+    comment: The integration never polls; it has no coordinator and no data to fetch.
+  brands:
+    status: todo
+    comment: >-
+      No icon/logo submitted to home-assistant/brands yet; the HACS
+      validation workflow ignores the brands check for this reason.
+  common-modules:
+    status: done
+    comment: >-
+      Delivery logic lives in delivery.py, entry plumbing in __init__.py,
+      constants in const.py. No coordinator is applicable.
+  config-flow:
+    status: done
+    comment: >-
+      UI setup with an entity selector per field; every field has a
+      data_description in strings.json.
+  config-flow-test-coverage:
+    status: done
+    comment: tests/test_config_flow.py covers the user step, the abort and the options flow.
+  dependency-transparency:
+    status: done
+    comment: No third-party requirements at all; everything used is Home Assistant core.
+  docs-actions:
+    status: done
+    comment: README documents the legacy service and its per-call data payload.
+  docs-high-level-description:
+    status: done
+  docs-installation-instructions:
+    status: done
+    comment: HACS custom-repository instructions in the README.
+  docs-removal-instructions:
+    status: todo
+    comment: >-
+      Removal is "delete the entry, uninstall from HACS" but it is not
+      written down anywhere yet.
+  docs-conditions:
+    status: exempt
+    comment: The integration provides no conditions.
+  docs-triggers:
+    status: exempt
+    comment: The integration provides no triggers.
+  entity-event-setup:
+    status: exempt
+    comment: The entity subscribes to nothing; it is write-only.
+  entity-unique-id:
+    status: done
+  has-entity-name:
+    status: done
+    comment: >-
+      _attr_has_entity_name with _attr_name = None; one service device per
+      entry provides the name.
+  runtime-data:
+    status: done
+    comment: >-
+      entry.runtime_data holds AirplayNotifierRuntimeData; nothing is stored
+      in hass.data by this integration.
+  test-before-configure:
+    status: todo
+    comment: >-
+      The config flow does not yet check that the chosen media_player
+      actually supports play_media, nor that the TTS engine can synthesize.
+  test-before-setup:
+    status: todo
+    comment: >-
+      async_setup_entry does not verify that the target media_player and TTS
+      entity still exist; a renamed or removed target only fails at the
+      first announcement.
+  unique-config-entry:
+    status: done
+    comment: unique_id is the target media_player entity id; a second entry aborts.
+
+  # Silver
+  action-exceptions:
+    status: done
+    comment: >-
+      Refusals raise ServiceValidationError and delivery failures raise
+      HomeAssistantError, both with translation keys from the exceptions
+      section of strings.json.
+  config-entry-unloading:
+    status: done
+    comment: >-
+      Platforms are unloaded, the legacy notify service is removed together
+      with its instance in hass.data, and the pending volume-restore timer
+      is cancelled.
+  docs-configuration-parameters:
+    status: done
+    comment: Options table in the README, data_description for every field.
+  docs-installation-parameters:
+    status: done
+  entity-unavailable:
+    status: todo
+    comment: >-
+      The notify entity is always available, even when the target
+      media_player is unavailable or the TTS engine is gone.
+  integration-owner:
+    status: done
+  log-when-unavailable:
+    status: todo
+    comment: Follows entity-unavailable; nothing tracks the target's availability yet.
+  parallel-updates:
+    status: exempt
+    comment: >-
+      No polling and no update coordinator. Concurrent announcements on one
+      player are serialised by VolumeRestoreState.lock, not by
+      PARALLEL_UPDATES.
+  reauthentication-flow:
+    status: exempt
+    comment: There is nothing to authenticate against.
+  test-coverage:
+    status: done
+    comment: Above 95 % statement coverage; CI gate at 85 %.
+
+  # Gold
+  devices:
+    status: done
+    comment: One service device per config entry.
+  diagnostics:
+    status: done
+  discovery:
+    status: exempt
+    comment: >-
+      There is nothing on the network to discover; the entry is a
+      user-chosen pairing of an existing media_player and an existing TTS
+      engine.
+  discovery-update-info:
+    status: exempt
+    comment: Same reason as discovery.
+  docs-data-update:
+    status: exempt
+    comment: The integration fetches no data.
+  docs-examples:
+    status: done
+    comment: alert, automation and deny-list examples in the README.
+  docs-known-limitations:
+    status: done
+    comment: docs/known-issues.md
+  docs-supported-devices:
+    status: done
+  docs-supported-functions:
+    status: done
+  docs-troubleshooting:
+    status: todo
+    comment: >-
+      known-issues.md describes the limitations, but there is no
+      symptom-oriented troubleshooting section.
+  docs-use-cases:
+    status: done
+  dynamic-devices:
+    status: exempt
+    comment: One entry is one player; there is nothing to discover dynamically.
+  entity-category:
+    status: exempt
+    comment: The notify entity is the entry's primary entity, not a config/diagnostic one.
+  entity-device-class:
+    status: exempt
+    comment: Notify entities have no device classes.
+  entity-disabled-by-default:
+    status: exempt
+    comment: The single entity is the point of the integration.
+  entity-translations:
+    status: done
+    comment: An entity section is declared in strings.json and all translations.
+  exception-translations:
+    status: done
+  icon-translations:
+    status: todo
+    comment: No icons.json yet; the entity uses the notify default icon.
+  reconfiguration-flow:
+    status: todo
+    comment: >-
+      media_player and tts_entity are fixed for the life of an entry;
+      changing the target means deleting and re-adding it.
+  repair-issues:
+    status: todo
+    comment: >-
+      A missing target media_player or TTS entity should raise a repair
+      issue rather than only failing at announcement time.
+  stale-devices:
+    status: exempt
+    comment: The device is created from the entry, and removed with it.
+
+  # Platinum
+  async-dependency:
+    status: done
+    comment: Everything is native async; no executor jobs are scheduled.
+  inject-websession:
+    status: exempt
+    comment: No HTTP client of its own.
+  strict-typing:
+    status: done
+    comment: mypy --strict passes over custom_components/airplay_notifier.

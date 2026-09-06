@@ -29,11 +29,21 @@ jobs:
       - name: Install dev dependencies
         run: pip install -r requirements_dev.txt
 
+      # `pytest-homeassistant-custom-component` is generated per Home
+      # Assistant release and pins `homeassistant` exactly, so upgrading
+      # only `homeassistant` leaves the test harness behind and the leg
+      # fails for the wrong reason. Both must move together.
       - name: Install latest Home Assistant (dev matrix leg)
         if: matrix.pre
-        run: pip install --pre --upgrade homeassistant
+        run: |
+          pip install --pre --upgrade \
+            homeassistant pytest-homeassistant-custom-component
 
+      # The dev leg is an early-warning signal against an unreleased Home
+      # Assistant, not a merge gate: it must not turn the whole workflow red
+      # when core breaks something upstream. The pinned leg is the gate.
       - name: Run tests with coverage
+        continue-on-error: ${{ matrix.pre }}
         run: pytest --cov=custom_components.airplay_notifier --cov-report=xml --cov-fail-under=85
 
       - name: Upload coverage
