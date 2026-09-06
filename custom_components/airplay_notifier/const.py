@@ -10,6 +10,15 @@ DOMAIN: Final = "airplay_notifier"
 MUSIC_ASSISTANT_DOMAIN: Final = "music_assistant"
 APPLE_TV_DOMAIN: Final = "apple_tv"
 
+# Actions called by the delivery strategies.
+SERVICE_PLAY_ANNOUNCEMENT: Final = "play_announcement"
+SERVICE_SPEAK: Final = "speak"
+
+# Music Assistant's `announce_volume` is an integer percentage (1-100); 0 is
+# not a valid "silent" value, see docs/known-issues.md.
+MA_MIN_ANNOUNCE_VOLUME: Final = 1
+MA_MAX_ANNOUNCE_VOLUME: Final = 100
+
 # Config / options entry keys.
 CONF_MEDIA_PLAYER: Final = "media_player"
 CONF_TTS_ENTITY: Final = "tts_entity"

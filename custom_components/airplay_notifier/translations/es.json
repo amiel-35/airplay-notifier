@@ -51,6 +51,9 @@
     "invalid_source_entity": {
       "message": "Aviso rechazado: «source_entity» es «{source_entity}», que no es un identificador de entidad utilizable (se esperaba dominio.objeto), así que no se pudo comprobar la lista de denegación."
     },
+    "no_delivery_path": {
+      "message": "No se puede hablar: el destino es un reproductor de Music Assistant, pero «music_assistant.play_announcement» no está disponible y «tts.speak» tampoco."
+    },
     "source_domain_denied": {
       "message": "Aviso rechazado en nombre de {source_entity}: el dominio «{domain}» está en los dominios de origen denegados ({deny_domains})."
     }

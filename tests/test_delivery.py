@@ -7,6 +7,7 @@ from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
+from homeassistant.components.media_source import PlayMedia
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
@@ -463,3 +464,82 @@ async def test_explicit_direct_strategy_overrides_music_assistant_detection(
 
     assert len(speak_calls) == 1
     assert len(announce_calls) == 0
+
+
+def _register_ma_player(hass: HomeAssistant, unique_id: str, object_id: str) -> str:
+    """Register a media_player owned by the music_assistant platform."""
+    entry = er.async_get(hass).async_get_or_create(
+        "media_player", "music_assistant", unique_id, suggested_object_id=object_id
+    )
+    hass.states.async_set(entry.entity_id, "idle", {})
+    return entry.entity_id
+
+
+async def test_music_assistant_falls_back_to_direct_when_action_missing(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A Music Assistant player still speaks when MA itself is not loaded.
+
+    `music_assistant` is an `after_dependencies`, so its action can be absent
+    while the player entity is still registered to its platform. This used to
+    raise a bare `ServiceNotFound`.
+    """
+    player = _register_ma_player(hass, "ma-not-loaded", "ma_not_loaded")
+    speak_calls = async_mock_service(hass, "tts", "speak")
+
+    await async_deliver_message(hass, _options(media_player=player), "Pizza is here")
+
+    assert len(speak_calls) == 1
+    assert "falling back to the Direct strategy" in caplog.text
+
+
+async def test_no_delivery_path_raises_translated_error(hass: HomeAssistant) -> None:
+    """Neither MA nor tts.speak available: a translated error, not ServiceNotFound."""
+    player = _register_ma_player(hass, "ma-nothing", "ma_nothing")
+
+    with pytest.raises(HomeAssistantError) as err:
+        await async_deliver_message(hass, _options(media_player=player), "Hello")
+
+    assert err.value.translation_key == "no_delivery_path"
+
+
+async def test_music_assistant_tts_url_is_cached(hass: HomeAssistant) -> None:
+    """The MA path caches the synthesized clip, like the Direct path does."""
+    player = _register_ma_player(hass, "ma-cache", "ma_cache")
+    async_mock_service(hass, "music_assistant", "play_announcement")
+    # `async_process_play_media_url` needs a base URL to make the relative
+    # `/api/tts_proxy/...` path absolute for an off-box Music Assistant.
+    hass.config.internal_url = "http://10.0.0.1:8123"
+
+    with (
+        patch(
+            "homeassistant.components.tts.generate_media_source_id",
+            return_value="media-source://tts/tts.piper?message=hi",
+        ) as generate,
+        patch(
+            "homeassistant.components.media_source.async_resolve_media",
+            return_value=PlayMedia("/api/tts_proxy/x.mp3", "audio/mpeg"),
+        ),
+    ):
+        await async_deliver_message(hass, _options(media_player=player), "hi")
+
+    assert generate.call_args.kwargs["cache"] is True
+
+
+async def test_music_assistant_volume_zero_is_clamped_and_warned(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Music Assistant has no silent announcement: volume 0 becomes 1 %, loudly."""
+    player = _register_ma_player(hass, "ma-zero", "ma_zero")
+    announce_calls = async_mock_service(hass, "music_assistant", "play_announcement")
+
+    with patch(
+        "custom_components.airplay_notifier.delivery._async_resolve_tts_url",
+        return_value="https://example.local/tts.mp3",
+    ):
+        await async_deliver_message(
+            hass, _options(media_player=player, volume=0.0), "Quiet please"
+        )
+
+    assert announce_calls[0].data["announce_volume"] == 1
+    assert "outside the range Music Assistant" in caplog.text

@@ -81,7 +81,7 @@ from homeassistant.components.media_player.const import (
 from homeassistant.components.tts.const import DOMAIN as TTS_DOMAIN
 from homeassistant.const import SERVICE_VOLUME_SET
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback, valid_entity_id
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv, entity_registry as er
 from homeassistant.helpers.event import async_call_later
 
@@ -92,9 +92,13 @@ from .const import (
     ATTR_VOICE,
     ATTR_VOLUME,
     DOMAIN,
+    MA_MAX_ANNOUNCE_VOLUME,
+    MA_MIN_ANNOUNCE_VOLUME,
     MIN_RESTORE_DELAY_SECONDS,
     MUSIC_ASSISTANT_DOMAIN,
     RESTORE_DELAY_PADDING_SECONDS,
+    SERVICE_PLAY_ANNOUNCEMENT,
+    SERVICE_SPEAK,
     SPEECH_SECONDS_PER_CHARACTER,
     STRATEGY_AUTO,
     STRATEGY_DIRECT,
@@ -282,6 +286,39 @@ def _resolve_strategy(hass: HomeAssistant, options: AirplayNotifierOptions) -> s
     return STRATEGY_DIRECT
 
 
+@callback
+def _async_usable_strategy(hass: HomeAssistant, strategy: str) -> str:
+    """Downgrade `strategy` to one whose action actually exists right now.
+
+    `music_assistant` is an `after_dependencies` entry, not a hard
+    dependency: the target player can be registered to the
+    `music_assistant` platform while the integration itself is not loaded
+    (not set up yet at startup, unloaded, or in a failed retry). Calling
+    `music_assistant.play_announcement` then fails with a bare
+    `ServiceNotFound`, which says nothing useful to whoever wrote the
+    automation.
+    """
+    if strategy != STRATEGY_MUSIC_ASSISTANT or hass.services.has_service(
+        MUSIC_ASSISTANT_DOMAIN, SERVICE_PLAY_ANNOUNCEMENT
+    ):
+        return strategy
+
+    if not hass.services.has_service(TTS_DOMAIN, SERVICE_SPEAK):
+        raise HomeAssistantError(
+            translation_domain=DOMAIN, translation_key="no_delivery_path"
+        )
+
+    _LOGGER.warning(
+        "%s.%s is not available (Music Assistant is not loaded); falling back "
+        "to the Direct strategy (%s.%s) for this announcement",
+        MUSIC_ASSISTANT_DOMAIN,
+        SERVICE_PLAY_ANNOUNCEMENT,
+        TTS_DOMAIN,
+        SERVICE_SPEAK,
+    )
+    return STRATEGY_DIRECT
+
+
 def _estimate_speech_seconds(message: str) -> float:
     """Estimate how long `message` will take to speak.
 
@@ -321,6 +358,13 @@ async def _async_resolve_tts_url(
         engine=tts_entity,
         language=language,
         options=tts_options,
+        # Same file cache the Direct strategy gets for free by passing
+        # `cache: true` to `tts.speak`. `generate_media_source_id`
+        # (`homeassistant/components/tts/media_source.py`) encodes it as
+        # `cache=true` in the media-source identifier, which
+        # `parse_media_source_id` turns back into `use_file_cache`. Without
+        # it the two strategies disagree about caching for identical text.
+        cache=True,
     )
     resolved = await media_source.async_resolve_media(
         hass, media_content_id, target_media_player
@@ -424,7 +468,7 @@ async def _async_deliver_direct(
     try:
         await hass.services.async_call(
             TTS_DOMAIN,
-            "speak",
+            SERVICE_SPEAK,
             {
                 "entity_id": options.tts_entity,
                 "media_player_entity_id": options.media_player,
@@ -452,6 +496,11 @@ async def _async_deliver_music_assistant(
     the announcement (handled by the Music Assistant player library, not by
     this integration), so `restore_volume` is not applicable to this
     strategy: there is nothing for us to restore.
+
+    `announce_volume` is an integer percentage and Music Assistant has no
+    "silent announcement" value, so a configured `volume: 0` is clamped up to
+    1 % and warned about rather than silently played at full volume. See
+    docs/known-issues.md.
     """
     url = await _async_resolve_tts_url(
         hass,
@@ -464,11 +513,24 @@ async def _async_deliver_music_assistant(
 
     service_data: dict[str, Any] = {"entity_id": options.media_player, "url": url}
     if options.volume is not None:
-        service_data["announce_volume"] = max(1, min(100, round(options.volume * 100)))
+        announce_volume = max(
+            MA_MIN_ANNOUNCE_VOLUME,
+            min(MA_MAX_ANNOUNCE_VOLUME, round(options.volume * 100)),
+        )
+        if announce_volume != round(options.volume * 100):
+            _LOGGER.warning(
+                "Volume %.2f is outside the range Music Assistant's "
+                "announce_volume accepts (%d-%d %%); announcing at %d %% instead",
+                options.volume,
+                MA_MIN_ANNOUNCE_VOLUME,
+                MA_MAX_ANNOUNCE_VOLUME,
+                announce_volume,
+            )
+        service_data["announce_volume"] = announce_volume
 
     await hass.services.async_call(
         MUSIC_ASSISTANT_DOMAIN,
-        "play_announcement",
+        SERVICE_PLAY_ANNOUNCEMENT,
         service_data,
         blocking=True,
     )
@@ -515,7 +577,7 @@ async def async_deliver_message(
     )
 
     full_message = _effective_message(options, message)
-    strategy = _resolve_strategy(hass, call_options)
+    strategy = _async_usable_strategy(hass, _resolve_strategy(hass, call_options))
 
     _LOGGER.debug(
         "Speaking on %s via %s strategy: %r",
