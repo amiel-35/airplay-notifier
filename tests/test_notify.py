@@ -12,6 +12,7 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.airplay_notifier import notify as airplay_notify
 from custom_components.airplay_notifier.const import (
+    CONF_ANNOUNCE_PREFIX,
     CONF_MEDIA_PLAYER,
     CONF_TTS_ENTITY,
     DOMAIN,
@@ -163,6 +164,44 @@ async def test_notify_send_message_schema_has_no_data_field(
             },
             blocking=True,
         )
+
+
+async def test_legacy_service_uses_live_options_after_reload(
+    hass: HomeAssistant,
+) -> None:
+    """Changing an option and reloading changes what the legacy service speaks.
+
+    Regression test for the stale-service bug: `discovery.async_load_platform`
+    is re-dispatched on every setup, but core's
+    `BaseNotificationService.async_register_services` returns early when the
+    service name already exists, so the *first* instance keeps serving the
+    `notify.airplay_<name>` service forever. If that instance captured the
+    options by value, an options change would never take effect.
+    """
+    hass.states.async_set(MEDIA_PLAYER, "idle", {})
+
+    entry = _make_entry()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    speak_calls = async_mock_service(hass, "tts", "speak")
+
+    hass.config_entries.async_update_entry(
+        entry, options={CONF_ANNOUNCE_PREFIX: "Attention."}
+    )
+    await hass.async_block_till_done()
+
+    await hass.services.async_call(
+        "notify",
+        "airplay_living_room",
+        {"message": "Dinner is ready"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+    assert len(speak_calls) == 1
+    assert speak_calls[0].data["message"] == "Attention. Dinner is ready"
 
 
 async def test_async_get_service_without_discovery_info(hass: HomeAssistant) -> None:

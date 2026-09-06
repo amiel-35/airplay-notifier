@@ -41,6 +41,11 @@
       }
     }
   },
+  "exceptions": {
+    "entry_not_loaded": {
+      "message": "L'entrée AirPlay Notifier associée à ce service notify n'est pas chargée."
+    }
+  },
   "selector": {
     "strategy": {
       "options": {

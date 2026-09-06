@@ -7,6 +7,15 @@ Exposes the two surfaces described in `__init__.py`:
   already slugified).
 - `async_setup_entry` registers a `NotifyEntity` for the same config entry.
 
+Neither surface may capture `AirplayNotifierOptions` by value. Core's
+`BaseNotificationService.async_register_services`
+(`homeassistant/components/notify/legacy.py`) returns early when a service
+with that name already exists, so after a reload the *original* service
+instance keeps answering `notify.airplay_<name>` even though a fresh
+instance was created by the re-dispatched discovery. Both classes therefore
+look the options up from the live config entry
+(`hass.config_entries.async_get_entry(...).runtime_data`) on every call.
+
 Both forward the message to `delivery.async_deliver_message`, which
 resolves the delivery strategy and speaks it — but only the legacy service
 can carry per-call `data` overrides and the `source_entity` the deny-list
@@ -29,13 +38,36 @@ from homeassistant.components.notify.const import ATTR_DATA
 from homeassistant.components.notify.legacy import BaseNotificationService
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
 from . import AirplayNotifierConfigEntry, AirplayNotifierRuntimeData
-from .delivery import AirplayNotifierOptions, AnnouncementDenied, async_deliver_message
+from .const import DOMAIN
+from .delivery import AnnouncementDenied, async_deliver_message
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _async_live_runtime_data(
+    hass: HomeAssistant, entry_id: str
+) -> AirplayNotifierRuntimeData:
+    """Return the *current* runtime data of `entry_id`.
+
+    Never cache what this returns: a reload replaces
+    `entry.runtime_data` wholesale, and core keeps the first legacy service
+    instance alive across reloads (see the module docstring).
+    `entry.runtime_data` is deleted by core when an entry is unloaded
+    (`homeassistant/config_entries.py`, `object.__delattr__(self,
+    "runtime_data")`), so `getattr` is the correct guard.
+    """
+    entry = hass.config_entries.async_get_entry(entry_id)
+    runtime_data = getattr(entry, "runtime_data", None) if entry is not None else None
+    if runtime_data is None:
+        raise HomeAssistantError(
+            translation_domain=DOMAIN, translation_key="entry_not_loaded"
+        )
+    return runtime_data  # type: ignore[no-any-return]
 
 
 async def async_get_service(
@@ -52,22 +84,27 @@ async def async_get_service(
         _LOGGER.error("AirPlay Notifier can only be set up through the UI")
         return None
 
-    entry = hass.config_entries.async_get_entry(discovery_info["entry_id"])
-    if entry is None or not hasattr(entry, "runtime_data"):
+    entry_id: str = discovery_info["entry_id"]
+    entry = hass.config_entries.async_get_entry(entry_id)
+    if entry is None or getattr(entry, "runtime_data", None) is None:
         _LOGGER.error("AirPlay Notifier config entry is not loaded")
         return None
 
-    runtime_data: AirplayNotifierRuntimeData = entry.runtime_data
-    return AirplayNotifierNotificationService(hass, runtime_data.options)
+    return AirplayNotifierNotificationService(hass, entry_id)
 
 
 class AirplayNotifierNotificationService(BaseNotificationService):
     """Legacy notify service that speaks the message via `delivery`."""
 
-    def __init__(self, hass: HomeAssistant, options: AirplayNotifierOptions) -> None:
-        """Initialize the service."""
+    def __init__(self, hass: HomeAssistant, entry_id: str) -> None:
+        """Initialize the service.
+
+        Only the `entry_id` is kept: the options are re-read from the live
+        config entry on every call so an options change (which reloads the
+        entry) takes effect even though core keeps this instance registered.
+        """
         self.hass = hass
-        self._options = options
+        self.entry_id = entry_id
 
     async def async_send_message(self, message: str, **kwargs: Any) -> None:
         """Speak `message`, applying any per-call `data` overrides.
@@ -75,14 +112,15 @@ class AirplayNotifierNotificationService(BaseNotificationService):
         `kwargs[ATTR_TITLE]`, if provided, is intentionally ignored: there is
         nothing meaningful to do with a title when the output is speech.
         """
+        runtime_data = _async_live_runtime_data(self.hass, self.entry_id)
         data = dict(kwargs.get(ATTR_DATA) or {})
         try:
-            await async_deliver_message(self.hass, self._options, message, data)
+            await async_deliver_message(self.hass, runtime_data.options, message, data)
         except AnnouncementDenied:
             _LOGGER.warning(
                 "Refused to speak notification on %s: source entity domain is "
                 "in deny_domains (security is never spoken)",
-                self._options.media_player,
+                runtime_data.options.media_player,
             )
 
 
@@ -105,7 +143,7 @@ class AirplayNotifierEntity(NotifyEntity):
     def __init__(self, entry: ConfigEntry) -> None:
         """Initialize the entity."""
         self._attr_unique_id = f"{entry.entry_id}_notify_entity"
-        self._options: AirplayNotifierOptions = entry.runtime_data.options
+        self._entry_id = entry.entry_id
 
     async def async_send_message(self, message: str, title: str | None = None) -> None:
         """Speak `message`.
@@ -120,4 +158,5 @@ class AirplayNotifierEntity(NotifyEntity):
         never raise `AnnouncementDenied`: the deny-list only ever inspects
         a `source_entity` that this surface has no way to carry.
         """
-        await async_deliver_message(self.hass, self._options, message)
+        runtime_data = _async_live_runtime_data(self.hass, self._entry_id)
+        await async_deliver_message(self.hass, runtime_data.options, message)

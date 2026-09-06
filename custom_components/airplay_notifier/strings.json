@@ -41,6 +41,11 @@
       }
     }
   },
+  "exceptions": {
+    "entry_not_loaded": {
+      "message": "The AirPlay Notifier entry behind this notify service is not loaded."
+    }
+  },
   "selector": {
     "strategy": {
       "options": {
