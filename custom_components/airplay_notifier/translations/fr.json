@@ -15,6 +15,13 @@
       "already_configured": "Ce lecteur multimédia est déjà configuré."
     }
   },
+  "entity": {
+    "notify": {
+      "speak": {
+        "name": "Énoncer"
+      }
+    }
+  },
   "options": {
     "step": {
       "init": {

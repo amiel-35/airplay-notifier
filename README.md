@@ -78,10 +78,15 @@ automation:
     action:
       - action: notify.send_message
         target:
-          entity_id: notify.living_room_speak
+          entity_id: notify.living_room
         data:
           message: The dishwasher is finished.
 ```
+
+Each config entry creates one service device named after the entry (the
+target player's friendly name at setup time) holding a single `notify`
+entity, so the entity is `notify.<player>` — `notify.living_room` for an
+entry titled "Living Room".
 
 ### The deny-list in practice
 
@@ -106,7 +111,7 @@ debug` in `logger:` shows why) instead of announcing the alarm's state —
 Note: `data.source_entity` (and the other per-call overrides) only work
 through the legacy `notify.airplay_<name>` service. Home Assistant's modern
 `notify.send_message` action has a fixed `message`/`title` schema with no
-generic `data` field, so calls made through a `notify.*_speak` entity
+generic `data` field, so calls made through the `notify.<player>` entity
 always use the entry's configured defaults — see
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 

@@ -39,6 +39,7 @@ from homeassistant.components.notify.legacy import BaseNotificationService
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
@@ -146,16 +147,34 @@ async def async_setup_entry(
 
 
 class AirplayNotifierEntity(NotifyEntity):
-    """Modern notify entity that speaks the message via `delivery`."""
+    """Modern notify entity that speaks the message via `delivery`.
+
+    Naming follows the `has-entity-name` rule: the entry owns one service
+    device (`identifiers={(DOMAIN, entry.entry_id)}`, named after the entry
+    title, i.e. the target player's friendly name at setup time) and this is
+    its single main entity, so `_attr_name` is `None` and the entity takes
+    the device's name. Two entries therefore produce two distinct
+    `notify.<player>` entity ids instead of `notify.speak` and
+    `notify.speak_2`, which is what the previous hard-coded `_attr_name =
+    "Speak"` produced.
+    """
 
     _attr_has_entity_name = True
-    _attr_name = "Speak"
+    _attr_name = None
+    _attr_translation_key = "speak"
     _attr_supported_features = NotifyEntityFeature.TITLE
 
     def __init__(self, entry: ConfigEntry) -> None:
         """Initialize the entity."""
         self._attr_unique_id = f"{entry.entry_id}_notify_entity"
         self._entry_id = entry.entry_id
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=entry.title,
+            manufacturer="AirPlay Notifier",
+            model="Spoken notifier",
+            entry_type=DeviceEntryType.SERVICE,
+        )
 
     async def async_send_message(self, message: str, title: str | None = None) -> None:
         """Speak `message`.

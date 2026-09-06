@@ -7,8 +7,10 @@ from datetime import timedelta
 import pytest
 import voluptuous as vol
 from homeassistant.components.notify.legacy import NOTIFY_SERVICES
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import device_registry as dr
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -285,6 +287,48 @@ async def test_no_volume_restore_timer_survives_unload(hass: HomeAssistant) -> N
     await hass.async_block_till_done()
 
     assert len(volume_calls) == 1
+
+
+async def test_two_entries_get_distinct_entities_and_devices(
+    hass: HomeAssistant,
+) -> None:
+    """Each entry owns one device and one entity named after it.
+
+    With the previous hard-coded `_attr_name = "Speak"` and no device, both
+    entries produced `notify.speak` / `notify.speak_2` — indistinguishable in
+    the UI and unstable in ordering.
+    """
+    first = _make_entry()
+    first.add_to_hass(hass)
+    second = MockConfigEntry(
+        domain=DOMAIN,
+        title="Kitchen HomePod",
+        unique_id="media_player.kitchen",
+        data={
+            CONF_MEDIA_PLAYER: "media_player.kitchen",
+            CONF_TTS_ENTITY: TTS_ENTITY,
+        },
+    )
+    second.add_to_hass(hass)
+
+    # Setting up the first entry loads the component, which sets up every
+    # other entry of the domain too.
+    assert await hass.config_entries.async_setup(first.entry_id)
+    await hass.async_block_till_done()
+    assert second.state is ConfigEntryState.LOADED
+
+    assert sorted(hass.states.async_entity_ids("notify")) == [
+        "notify.kitchen_homepod",
+        "notify.living_room",
+    ]
+
+    devices = dr.async_get(hass)
+    for entry, title in ((first, "Living Room"), (second, "Kitchen HomePod")):
+        device = devices.async_get_device_by_identifier(
+            (DOMAIN, entry.entry_id), entry.entry_id
+        )
+        assert device is not None
+        assert device.name == title
 
 
 async def test_async_get_service_without_discovery_info(hass: HomeAssistant) -> None:
