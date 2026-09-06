@@ -1,0 +1,7 @@
+{
+  "name": "AirPlay Notifier",
+  "render_readme": true,
+  "zip_release": true,
+  "filename": "airplay_notifier.zip",
+  "homeassistant": "2026.9.1"
+}

@@ -1,0 +1,53 @@
+{
+  "title": "AirPlay Notifier",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configurer AirPlay Notifier",
+        "description": "Choisissez l'appareil sur lequel énoncer les annonces, ainsi que le moteur de synthèse vocale à utiliser. Le volume, la langue et les autres réglages se configurent ensuite depuis les options.",
+        "data": {
+          "media_player": "Lecteur multimédia",
+          "tts_entity": "Moteur de synthèse vocale"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Ce lecteur multimédia est déjà configuré."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Réglages AirPlay Notifier",
+        "description": "Ajustez la façon dont les annonces sont énoncées sur cet appareil.",
+        "data": {
+          "language": "Langue",
+          "voice": "Voix",
+          "volume": "Volume",
+          "restore_volume": "Restaurer le volume après l'annonce",
+          "strategy": "Stratégie de diffusion",
+          "announce_prefix": "Préfixe d'annonce",
+          "deny_domains": "Domaines source refusés"
+        },
+        "data_description": {
+          "language": "Laisser vide pour utiliser la langue par défaut du moteur de synthèse vocale.",
+          "voice": "Identifiant de voix propre au moteur. Laisser vide pour la voix par défaut du moteur.",
+          "volume": "Volume d'énonciation, de 0 (silence) à 1 (maximum).",
+          "restore_volume": "Restaure le volume précédent du lecteur une fois l'annonce terminée. Ne s'applique pas à la stratégie Music Assistant, qui gère elle-même le volume des annonces.",
+          "strategy": "Auto détecte automatiquement les lecteurs Music Assistant ; Music Assistant et Direct imposent un mode de diffusion.",
+          "announce_prefix": "Texte énoncé avant chaque message, par exemple un mot d'alerte ou « Attention ».",
+          "deny_domains": "Domaines d'entité séparés par des virgules. Un appel dont le data.source_entity appartient à l'un de ces domaines est refusé et journalisé, jamais énoncé."
+        }
+      }
+    }
+  },
+  "selector": {
+    "strategy": {
+      "options": {
+        "auto": "Auto",
+        "music_assistant": "Music Assistant",
+        "direct": "Direct (tts.speak)"
+      }
+    }
+  }
+}

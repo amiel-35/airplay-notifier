@@ -1,0 +1,53 @@
+{
+  "title": "AirPlay Notifier",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up AirPlay Notifier",
+        "description": "Choose the player to speak announcements on, and the text-to-speech engine to use. Volume, language, and other behavior are configured afterwards from the options.",
+        "data": {
+          "media_player": "Media player",
+          "tts_entity": "Text-to-speech engine"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "This media player is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "AirPlay Notifier settings",
+        "description": "Tune how announcements are spoken on this player.",
+        "data": {
+          "language": "Language",
+          "voice": "Voice",
+          "volume": "Volume",
+          "restore_volume": "Restore volume after speaking",
+          "strategy": "Delivery strategy",
+          "announce_prefix": "Announcement prefix",
+          "deny_domains": "Denied source domains"
+        },
+        "data_description": {
+          "language": "Leave empty to use the TTS engine's default language.",
+          "voice": "Engine-specific voice identifier. Leave empty to use the engine's default voice.",
+          "volume": "Volume to speak at, 0 (silent) to 1 (maximum).",
+          "restore_volume": "Restore the player's previous volume once the announcement has finished. Not applicable to the Music Assistant strategy, which manages announcement volume itself.",
+          "strategy": "Auto detects Music Assistant players automatically; Music Assistant and Direct force one delivery path.",
+          "announce_prefix": "Text spoken before every message, e.g. a chime word or \"Attention\".",
+          "deny_domains": "Comma-separated entity domains. A call whose data.source_entity belongs to one of these is refused and logged, never spoken."
+        }
+      }
+    }
+  },
+  "selector": {
+    "strategy": {
+      "options": {
+        "auto": "Auto",
+        "music_assistant": "Music Assistant",
+        "direct": "Direct (tts.speak)"
+      }
+    }
+  }
+}

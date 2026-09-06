@@ -1,0 +1,24 @@
+{
+  "domain": "airplay_notifier",
+  "name": "AirPlay Notifier",
+  "after_dependencies": [
+    "music_assistant",
+    "apple_tv"
+  ],
+  "codeowners": [
+    "@amiel-35"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "media_player",
+    "media_source",
+    "notify",
+    "tts"
+  ],
+  "documentation": "https://github.com/amiel-35/airplay-notifier",
+  "integration_type": "device",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/amiel-35/airplay-notifier/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

@@ -1,0 +1,53 @@
+{
+  "title": "AirPlay Notifier",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configurar AirPlay Notifier",
+        "description": "Elige el reproductor en el que se dirán los avisos y el motor de texto a voz que se usará. El volumen, el idioma y el resto del comportamiento se configuran después desde las opciones.",
+        "data": {
+          "media_player": "Reproductor multimedia",
+          "tts_entity": "Motor de texto a voz"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "Este reproductor multimedia ya está configurado."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Ajustes de AirPlay Notifier",
+        "description": "Ajusta cómo se dicen los avisos en este reproductor.",
+        "data": {
+          "language": "Idioma",
+          "voice": "Voz",
+          "volume": "Volumen",
+          "restore_volume": "Restaurar el volumen tras el aviso",
+          "strategy": "Estrategia de entrega",
+          "announce_prefix": "Prefijo del aviso",
+          "deny_domains": "Dominios de origen denegados"
+        },
+        "data_description": {
+          "language": "Déjalo vacío para usar el idioma predeterminado del motor de texto a voz.",
+          "voice": "Identificador de voz específico del motor. Déjalo vacío para usar la voz predeterminada del motor.",
+          "volume": "Volumen del aviso, de 0 (silencio) a 1 (máximo).",
+          "restore_volume": "Restaura el volumen anterior del reproductor una vez terminado el aviso. No se aplica a la estrategia Music Assistant, que gestiona ella misma el volumen de los avisos.",
+          "strategy": "Auto detecta automáticamente los reproductores Music Assistant; Music Assistant y Direct fuerzan una vía de entrega concreta.",
+          "announce_prefix": "Texto que se dice antes de cada mensaje, por ejemplo una palabra de aviso o «Atención».",
+          "deny_domains": "Dominios de entidad separados por comas. Una llamada cuyo data.source_entity pertenezca a uno de estos dominios se rechaza y se registra, nunca se dice en voz alta."
+        }
+      }
+    }
+  },
+  "selector": {
+    "strategy": {
+      "options": {
+        "auto": "Auto",
+        "music_assistant": "Music Assistant",
+        "direct": "Directo (tts.speak)"
+      }
+    }
+  }
+}
