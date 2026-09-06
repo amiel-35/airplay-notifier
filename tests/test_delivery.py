@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
@@ -14,7 +15,11 @@ from pytest_homeassistant_custom_component.common import (
     async_mock_service,
 )
 
-from custom_components.airplay_notifier.const import STRATEGY_AUTO, STRATEGY_DIRECT
+from custom_components.airplay_notifier.const import (
+    DOMAIN,
+    STRATEGY_AUTO,
+    STRATEGY_DIRECT,
+)
 from custom_components.airplay_notifier.delivery import (
     AirplayNotifierOptions,
     AnnouncementDenied,
@@ -95,6 +100,107 @@ async def test_deny_list_raises(hass: HomeAssistant) -> None:
         )
 
     assert len(speak_calls) == 0
+
+
+@pytest.mark.parametrize(
+    "source_entity",
+    [
+        pytest.param(["lock.front_door"], id="list"),
+        pytest.param(["sensor.ok", "lock.front_door"], id="list-with-allowed-entry"),
+        pytest.param("LOCK.Front_Door", id="upper-case"),
+        pytest.param(["ALARM_CONTROL_PANEL.Home"], id="upper-case-in-list"),
+        pytest.param(("lock.front_door",), id="tuple"),
+    ],
+    # `source_entity` was compared raw against `deny_domains`, so a list (the
+    # shape every HA `entity_id` field accepts) or any capitalisation walked
+    # straight past the deny-list and got spoken.
+)
+async def test_deny_list_normalises_source_entity(
+    hass: HomeAssistant, source_entity: object
+) -> None:
+    """A denied domain is caught whatever shape/case `source_entity` arrives in."""
+    hass.states.async_set(DIRECT_PLAYER, "idle", {})
+    speak_calls = async_mock_service(hass, "tts", "speak")
+
+    with pytest.raises(AnnouncementDenied):
+        await async_deliver_message(
+            hass, _options(), "Front door", {"source_entity": source_entity}
+        )
+
+    assert len(speak_calls) == 0
+
+
+async def test_deny_list_honours_upper_case_deny_domains(hass: HomeAssistant) -> None:
+    """A deny-list entry typed in upper case still matches."""
+    hass.states.async_set(DIRECT_PLAYER, "idle", {})
+    speak_calls = async_mock_service(hass, "tts", "speak")
+
+    with pytest.raises(AnnouncementDenied):
+        await async_deliver_message(
+            hass,
+            _options(deny_domains=["Lock"]),
+            "Front door",
+            {"source_entity": "lock.front_door"},
+        )
+
+    assert len(speak_calls) == 0
+
+
+@pytest.mark.parametrize(
+    "source_entity",
+    [
+        pytest.param("garbage", id="no-dot"),
+        pytest.param("", id="empty"),
+        pytest.param("lock.", id="no-object-id"),
+        pytest.param(["lock.front_door", "garbage"], id="one-bad-entry"),
+        pytest.param(42, id="not-a-string"),
+    ],
+)
+async def test_unusable_source_entity_is_refused_not_ignored(
+    hass: HomeAssistant, source_entity: object
+) -> None:
+    """A `source_entity` that is not `domain.object_id` refuses the call."""
+    hass.states.async_set(DIRECT_PLAYER, "idle", {})
+    speak_calls = async_mock_service(hass, "tts", "speak")
+
+    with pytest.raises(AnnouncementDenied):
+        await async_deliver_message(
+            hass, _options(), "Something", {"source_entity": source_entity}
+        )
+
+    assert len(speak_calls) == 0
+
+
+async def test_allowed_source_entity_still_speaks(hass: HomeAssistant) -> None:
+    """A well-formed `source_entity` outside the deny-list is spoken normally."""
+    hass.states.async_set(DIRECT_PLAYER, "idle", {})
+    speak_calls = async_mock_service(hass, "tts", "speak")
+
+    await async_deliver_message(
+        hass,
+        _options(),
+        "Dishwasher finished",
+        {"source_entity": ["binary_sensor.Dishwasher_Done"]},
+    )
+
+    assert len(speak_calls) == 1
+
+
+async def test_deny_list_raises_service_validation_error(hass: HomeAssistant) -> None:
+    """A refusal is a `ServiceValidationError` carrying a translation key."""
+    hass.states.async_set(DIRECT_PLAYER, "idle", {})
+    async_mock_service(hass, "tts", "speak")
+
+    with pytest.raises(ServiceValidationError) as err:
+        await async_deliver_message(
+            hass,
+            _options(),
+            "Armed away",
+            {"source_entity": "alarm_control_panel.home"},
+        )
+
+    assert err.value.translation_domain == DOMAIN
+    assert err.value.translation_key == "source_domain_denied"
 
 
 async def test_volume_is_set_and_restored(hass: HomeAssistant) -> None:

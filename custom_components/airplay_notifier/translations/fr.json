@@ -44,6 +44,12 @@
   "exceptions": {
     "entry_not_loaded": {
       "message": "L'entrée AirPlay Notifier associée à ce service notify n'est pas chargée."
+    },
+    "invalid_source_entity": {
+      "message": "Annonce refusée : « source_entity » vaut « {source_entity} », qui n'est pas un identifiant d'entité utilisable (domaine.objet attendu) ; la liste de refus n'a pas pu être vérifiée."
+    },
+    "source_domain_denied": {
+      "message": "Annonce refusée au nom de {source_entity} : le domaine « {domain} » figure dans les domaines source refusés ({deny_domains})."
     }
   },
   "selector": {

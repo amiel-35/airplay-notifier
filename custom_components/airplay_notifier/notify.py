@@ -117,11 +117,17 @@ class AirplayNotifierNotificationService(BaseNotificationService):
         try:
             await async_deliver_message(self.hass, runtime_data.options, message, data)
         except AnnouncementDenied:
+            # Logged here *and* re-raised: a refusal must be visible in the
+            # log (the automation author may never look at the service call
+            # result) and must fail the calling action rather than silently
+            # doing nothing.
             _LOGGER.warning(
-                "Refused to speak notification on %s: source entity domain is "
-                "in deny_domains (security is never spoken)",
+                "Refused to speak notification on %s: data.source_entity is "
+                "unusable or its domain is in deny_domains (security is never "
+                "spoken)",
                 runtime_data.options.media_player,
             )
+            raise
 
 
 async def async_setup_entry(

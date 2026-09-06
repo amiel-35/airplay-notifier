@@ -78,9 +78,9 @@ from homeassistant.components.media_player.const import (
 )
 from homeassistant.components.tts.const import DOMAIN as TTS_DOMAIN
 from homeassistant.const import SERVICE_VOLUME_SET
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import entity_registry as er
+from homeassistant.core import HomeAssistant, valid_entity_id
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import config_validation as cv, entity_registry as er
 from homeassistant.helpers.event import async_call_later
 
 from .const import (
@@ -89,6 +89,7 @@ from .const import (
     ATTR_TTS_ENTITY,
     ATTR_VOICE,
     ATTR_VOLUME,
+    DOMAIN,
     MIN_RESTORE_DELAY_SECONDS,
     MUSIC_ASSISTANT_DOMAIN,
     RESTORE_DELAY_PADDING_SECONDS,
@@ -116,12 +117,18 @@ class AirplayNotifierOptions:
     deny_domains: list[str] = field(default_factory=list)
 
 
-class AnnouncementDenied(HomeAssistantError):
+class AnnouncementDenied(ServiceValidationError):
     """Raised when a call is refused by the deny-list.
 
     Security is never spoken: `alarm_control_panel` and `lock` (by default)
-    are excluded from `deny_domains` so an armed-away announcement or a door
+    are listed in `deny_domains` so an armed-away announcement or a door
     lock state can never be read aloud by mistake.
+
+    A `ServiceValidationError` rather than a bare `HomeAssistantError`: the
+    caller passed something this integration refuses to act on, and Home
+    Assistant renders that class of error to the user without a stack trace
+    (`homeassistant/exceptions.py`). Every instance carries a
+    `translation_key` resolved from this integration's `exceptions` section.
     """
 
 
@@ -132,17 +139,53 @@ def _effective_message(options: AirplayNotifierOptions, message: str) -> str:
     return message
 
 
+def _normalise_source_entities(value: Any) -> list[str]:
+    """Return `value` as a list of lower-case, well-formed entity ids.
+
+    `source_entity` is caller-supplied and arrives in whatever shape an
+    automation happens to produce: a bare string, a list (the shape every
+    Home Assistant `entity_id` field accepts), a tuple from a template, or
+    something with stray whitespace or capitals. Every one of those used to
+    walk straight past the deny-list, so they are all normalised here with
+    `cv.ensure_list` + `str()` + `casefold()`.
+
+    Anything that is not a usable `domain.object_id`
+    (`homeassistant.core.valid_entity_id`) is *refused*, never ignored:
+    silently speaking a message whose provenance could not be checked is
+    exactly the failure mode the deny-list exists to prevent.
+    """
+    entities: list[str] = []
+    for item in cv.ensure_list(value):
+        entity_id = str(item).strip().casefold()
+        if not valid_entity_id(entity_id):
+            raise AnnouncementDenied(
+                translation_domain=DOMAIN,
+                translation_key="invalid_source_entity",
+                translation_placeholders={"source_entity": str(item)},
+            )
+        entities.append(entity_id)
+    return entities
+
+
 def _check_deny_list(options: AirplayNotifierOptions, data: dict[str, Any]) -> None:
-    """Refuse the call if `data.source_entity` belongs to a denied domain."""
-    source_entity = data.get(ATTR_SOURCE_ENTITY)
-    if not source_entity or "." not in source_entity:
+    """Refuse the call if any `data.source_entity` is in a denied domain."""
+    raw = data.get(ATTR_SOURCE_ENTITY)
+    if raw is None:
         return
-    domain = source_entity.split(".", 1)[0]
-    if domain in options.deny_domains:
-        raise AnnouncementDenied(
-            f"Refusing to speak on behalf of {source_entity!r}: "
-            f"domain {domain!r} is in deny_domains {options.deny_domains}"
-        )
+
+    denied = {domain.strip().casefold() for domain in options.deny_domains}
+    for entity_id in _normalise_source_entities(raw):
+        domain = entity_id.split(".", 1)[0]
+        if domain in denied:
+            raise AnnouncementDenied(
+                translation_domain=DOMAIN,
+                translation_key="source_domain_denied",
+                translation_placeholders={
+                    "source_entity": entity_id,
+                    "domain": domain,
+                    "deny_domains": ", ".join(sorted(denied)),
+                },
+            )
 
 
 def _resolve_strategy(hass: HomeAssistant, options: AirplayNotifierOptions) -> str:

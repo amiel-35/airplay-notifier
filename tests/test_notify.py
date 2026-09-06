@@ -6,6 +6,7 @@ import pytest
 import voluptuous as vol
 from homeassistant.components.notify.legacy import NOTIFY_SERVICES
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_mock_service,
@@ -108,8 +109,15 @@ async def test_notify_entity_send_message_speaks(hass: HomeAssistant) -> None:
     assert speak_calls[0].data["message"] == "Garage door open"
 
 
-async def test_deny_list_refuses_call(hass: HomeAssistant) -> None:
-    """A call whose source_entity is in deny_domains is refused, nothing spoken."""
+async def test_deny_list_refuses_call(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A call whose source_entity is in deny_domains is refused, nothing spoken.
+
+    The refusal surfaces to the caller as a `ServiceValidationError` *and* is
+    logged, so a misconfigured automation fails loudly instead of silently
+    doing nothing.
+    """
     hass.states.async_set(MEDIA_PLAYER, "idle", {})
 
     entry = _make_entry()
@@ -119,18 +127,20 @@ async def test_deny_list_refuses_call(hass: HomeAssistant) -> None:
 
     speak_calls = async_mock_service(hass, "tts", "speak")
 
-    await hass.services.async_call(
-        "notify",
-        "airplay_living_room",
-        {
-            "message": "Alarm is armed away",
-            "data": {"source_entity": "alarm_control_panel.home"},
-        },
-        blocking=True,
-    )
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            "notify",
+            "airplay_living_room",
+            {
+                "message": "Alarm is armed away",
+                "data": {"source_entity": "alarm_control_panel.home"},
+            },
+            blocking=True,
+        )
     await hass.async_block_till_done()
 
     assert len(speak_calls) == 0
+    assert "deny_domains" in caplog.text
 
 
 async def test_notify_send_message_schema_has_no_data_field(

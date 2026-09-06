@@ -44,6 +44,12 @@
   "exceptions": {
     "entry_not_loaded": {
       "message": "The AirPlay Notifier entry behind this notify service is not loaded."
+    },
+    "invalid_source_entity": {
+      "message": "Refused to speak: 'source_entity' is \"{source_entity}\", which is not a usable entity id (expected domain.object_id), so the deny-list could not be checked."
+    },
+    "source_domain_denied": {
+      "message": "Refused to speak on behalf of {source_entity}: the domain '{domain}' is in the denied source domains ({deny_domains})."
     }
   },
   "selector": {
