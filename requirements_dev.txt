@@ -3,3 +3,8 @@ pytest-homeassistant-custom-component==0.13.364
 pytest-cov
 ruff
 mypy
+# AirPlay Notifier depends on the `tts` integration, which depends on `ffmpeg`/`mutagen`
+# at setup time; pytest-homeassistant-custom-component does not install them.
+# Pinned to what homeassistant==2026.9.1's tts/ffmpeg manifests require.
+ha-ffmpeg==3.2.2
+mutagen==1.48.1
