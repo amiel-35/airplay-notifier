@@ -9,17 +9,20 @@ modern `NotifyEntity` (`notify.send_message`) for new automations.
 
 One config entry manages exactly one `media_player`. Both notify surfaces
 share the same `AirplayNotifierOptions`, rebuilt from the entry's data and
-options on every setup/reload; see delivery.py for how a message actually
-gets spoken.
+options on every setup/reload and looked up from `entry.runtime_data` on
+every call (never captured — see notify.py); see delivery.py for how a
+message actually gets spoken.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from homeassistant.components.notify.const import DOMAIN as NOTIFY_DOMAIN
+from homeassistant.components.notify.legacy import NOTIFY_SERVICES
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME, Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import discovery
 from homeassistant.util import slugify
 
@@ -76,6 +79,37 @@ def _build_options(entry: AirplayNotifierConfigEntry) -> AirplayNotifierOptions:
     )
 
 
+@callback
+def _async_remove_legacy_service(
+    hass: HomeAssistant, entry_id: str, service_name: str
+) -> None:
+    """Unregister `notify.<service_name>` and drop its service instance.
+
+    The legacy notify machinery has no unload hook for discovery-registered
+    platforms: `homeassistant/components/notify/legacy.py` only ever appends
+    to `hass.data[NOTIFY_SERVICES][<integration>]` (the `NOTIFY_SERVICES`
+    `HassKey`, `notify_services`), and
+    `BaseNotificationService.async_register_services` short-circuits when the
+    service name already exists. Without this cleanup an unloaded entry would
+    leave a live `notify.airplay_<name>` service pointing at a dead entry,
+    and every reload would leak one more instance into `hass.data`.
+    """
+    hass.services.async_remove(NOTIFY_DOMAIN, service_name)
+
+    services = hass.data.get(NOTIFY_SERVICES, {}).get(DOMAIN)
+    if services is None:
+        return
+    remaining = [
+        service
+        for service in services
+        if getattr(service, "entry_id", None) != entry_id
+    ]
+    if remaining:
+        hass.data[NOTIFY_SERVICES][DOMAIN] = remaining
+    else:
+        hass.data[NOTIFY_SERVICES].pop(DOMAIN, None)
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: AirplayNotifierConfigEntry
 ) -> bool:
@@ -87,6 +121,9 @@ async def async_setup_entry(
     )
 
     entry.async_on_unload(entry.add_update_listener(_async_update_options))
+    entry.async_on_unload(
+        lambda: _async_remove_legacy_service(hass, entry.entry_id, legacy_service_name)
+    )
 
     # Legacy `notify.airplay_<name>` service, discovered the same way
     # `mobile_app` discovers its own per-device notify services (see

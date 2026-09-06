@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 import voluptuous as vol
+from homeassistant.components.notify.legacy import NOTIFY_SERVICES
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -202,6 +203,39 @@ async def test_legacy_service_uses_live_options_after_reload(
 
     assert len(speak_calls) == 1
     assert speak_calls[0].data["message"] == "Attention. Dinner is ready"
+
+
+async def test_legacy_service_is_removed_on_entry_removal(
+    hass: HomeAssistant,
+) -> None:
+    """Removing the entry unregisters notify.airplay_<name> and its instance."""
+    entry = _make_entry()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert hass.services.has_service("notify", "airplay_living_room")
+    assert hass.data[NOTIFY_SERVICES][DOMAIN]
+
+    assert await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert not hass.services.has_service("notify", "airplay_living_room")
+    assert not hass.data[NOTIFY_SERVICES].get(DOMAIN)
+
+
+async def test_legacy_service_re_registers_after_reload(hass: HomeAssistant) -> None:
+    """A reload leaves exactly one live service instance behind, not two."""
+    entry = _make_entry()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert hass.services.has_service("notify", "airplay_living_room")
+    assert len(hass.data[NOTIFY_SERVICES][DOMAIN]) == 1
 
 
 async def test_async_get_service_without_discovery_info(hass: HomeAssistant) -> None:
