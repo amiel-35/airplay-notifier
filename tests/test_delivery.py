@@ -113,6 +113,9 @@ async def test_deny_list_raises(hass: HomeAssistant) -> None:
         pytest.param("LOCK.Front_Door", id="upper-case"),
         pytest.param(["ALARM_CONTROL_PANEL.Home"], id="upper-case-in-list"),
         pytest.param(("lock.front_door",), id="tuple"),
+        pytest.param(("sensor.ok", "lock.front_door"), id="tuple-with-allowed-entry"),
+        pytest.param({"lock.front_door"}, id="set"),
+        pytest.param(frozenset({"lock.front_door"}), id="frozenset"),
     ],
     # `source_entity` was compared raw against `deny_domains`, so a list (the
     # shape every HA `entity_id` field accepts) or any capitalisation walked
@@ -172,6 +175,59 @@ async def test_unusable_source_entity_is_refused_not_ignored(
         )
 
     assert len(speak_calls) == 0
+
+
+@pytest.mark.parametrize(
+    "source_entity",
+    [
+        pytest.param(("lock.front_door",), id="tuple"),
+        pytest.param({"lock.front_door"}, id="set"),
+    ],
+)
+async def test_containers_are_unwrapped_not_stringified(
+    hass: HomeAssistant, source_entity: object
+) -> None:
+    """A tuple or set is unwrapped, so its ids reach the deny-list check.
+
+    `cv.ensure_list` only unwraps a `list`, so a tuple used to be wrapped
+    whole and refused as `"('lock.front_door',)"` — the right outcome
+    (refused) for the wrong reason (`invalid_source_entity` instead of
+    `source_domain_denied`). It also meant a tuple of *allowed* entities was
+    refused, which the deny-list has no business doing.
+    """
+    hass.states.async_set(DIRECT_PLAYER, "idle", {})
+    async_mock_service(hass, "tts", "speak")
+
+    with pytest.raises(AnnouncementDenied) as err:
+        await async_deliver_message(
+            hass, _options(), "Front door", {"source_entity": source_entity}
+        )
+
+    assert err.value.translation_key == "source_domain_denied"
+    assert err.value.translation_placeholders is not None
+    assert err.value.translation_placeholders["source_entity"] == "lock.front_door"
+
+
+@pytest.mark.parametrize(
+    "source_entity",
+    [
+        pytest.param(("binary_sensor.dishwasher_done",), id="tuple"),
+        pytest.param({"binary_sensor.Dishwasher_Done"}, id="set"),
+        pytest.param(frozenset({"binary_sensor.dishwasher_done"}), id="frozenset"),
+    ],
+)
+async def test_allowed_container_of_source_entities_still_speaks(
+    hass: HomeAssistant, source_entity: object
+) -> None:
+    """A tuple/set of allowed entities is spoken, not refused wholesale."""
+    hass.states.async_set(DIRECT_PLAYER, "idle", {})
+    speak_calls = async_mock_service(hass, "tts", "speak")
+
+    await async_deliver_message(
+        hass, _options(), "Dishwasher finished", {"source_entity": source_entity}
+    )
+
+    assert len(speak_calls) == 1
 
 
 async def test_allowed_source_entity_still_speaks(hass: HomeAssistant) -> None:

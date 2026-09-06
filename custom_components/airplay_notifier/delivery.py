@@ -222,15 +222,33 @@ def _effective_message(options: AirplayNotifierOptions, message: str) -> str:
     return message
 
 
+def _as_source_entity_items(value: Any) -> list[Any]:
+    """Unwrap `value` into the individual entity ids it carries.
+
+    `cv.ensure_list` only unwraps a `list`: a tuple or a set — both of which
+    a template or a Python-side caller can perfectly well produce — would be
+    wrapped whole and then refused as a single unusable id, so a genuinely
+    denied `("lock.front_door",)` was rejected for the wrong reason. Every
+    ordinary container is therefore unwrapped explicitly here.
+
+    Deliberately not generalised to "any iterable": a `str` is iterable, and
+    so are objects whose iteration has side effects. Anything else is one
+    candidate id.
+    """
+    if isinstance(value, list | tuple | set | frozenset):
+        return list(value)
+    return [value]
+
+
 def _normalise_source_entities(value: Any) -> list[str]:
     """Return `value` as a list of lower-case, well-formed entity ids.
 
     `source_entity` is caller-supplied and arrives in whatever shape an
     automation happens to produce: a bare string, a list (the shape every
-    Home Assistant `entity_id` field accepts), a tuple from a template, or
-    something with stray whitespace or capitals. Every one of those used to
-    walk straight past the deny-list, so they are all normalised here with
-    `cv.ensure_list` + `str()` + `casefold()`.
+    Home Assistant `entity_id` field accepts), a tuple or set from a
+    template, or something with stray whitespace or capitals. Every one of
+    those used to walk straight past the deny-list, so they are all
+    normalised here with `_as_source_entity_items` + `str()` + `casefold()`.
 
     Anything that is not a usable `domain.object_id`
     (`homeassistant.core.valid_entity_id`) is *refused*, never ignored:
@@ -238,7 +256,7 @@ def _normalise_source_entities(value: Any) -> list[str]:
     exactly the failure mode the deny-list exists to prevent.
     """
     entities: list[str] = []
-    for item in cv.ensure_list(value):
+    for item in _as_source_entity_items(value):
         entity_id = str(item).strip().casefold()
         if not valid_entity_id(entity_id):
             raise AnnouncementDenied(

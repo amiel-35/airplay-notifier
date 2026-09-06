@@ -313,8 +313,17 @@ shapes through:
 - any **capitalisation**, because entity domains are lower-case;
 - a **non-string**, which raised `TypeError` deep inside delivery.
 
-`_normalise_source_entities` therefore runs `cv.ensure_list` → `str()` →
-`.strip().casefold()` over the value and validates each result with
+A **tuple or set** — which a template or a Python-side caller can equally
+well produce — needs its own unwrapping: `cv.ensure_list` only unwraps a
+`list`, so a tuple was wrapped whole and then refused as the single
+unusable id `"('lock.front_door',)"`. Right outcome, wrong reason — and a
+tuple of perfectly *allowed* entities was refused too.
+`_as_source_entity_items` unwraps `list`, `tuple`, `set` and `frozenset`
+explicitly. Deliberately not "any iterable": `str` is iterable.
+
+`_normalise_source_entities` therefore runs `_as_source_entity_items` →
+`str()` → `.strip().casefold()` over the value and validates each result
+with
 `homeassistant.core.valid_entity_id`; `deny_domains` entries are casefolded
 too. Anything that is not a usable `domain.object_id` is **refused**, not
 ignored: a message whose provenance cannot be checked is precisely what the
