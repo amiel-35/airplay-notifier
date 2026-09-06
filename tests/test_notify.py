@@ -9,7 +9,7 @@ import voluptuous as vol
 from homeassistant.components.notify.legacy import NOTIFY_SERVICES
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
@@ -329,6 +329,21 @@ async def test_two_entries_get_distinct_entities_and_devices(
         )
         assert device is not None
         assert device.name == title
+
+
+async def test_legacy_service_reports_an_unloaded_entry(hass: HomeAssistant) -> None:
+    """Speaking through a service whose entry is gone is a clear error.
+
+    Looking the entry up on every call (the fix for stale options) means the
+    lookup can now come back empty — after an unload, or if the entry was
+    deleted while a call was in flight.
+    """
+    service = airplay_notify.AirplayNotifierNotificationService(hass, "gone")
+
+    with pytest.raises(HomeAssistantError) as err:
+        await service.async_send_message("Hello")
+
+    assert err.value.translation_key == "entry_not_loaded"
 
 
 async def test_async_get_service_without_discovery_info(hass: HomeAssistant) -> None:

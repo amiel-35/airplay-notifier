@@ -10,7 +10,10 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.airplay_notifier import async_migrate_entry
+from custom_components.airplay_notifier import (
+    _async_remove_legacy_service,
+    async_migrate_entry,
+)
 from custom_components.airplay_notifier.config_flow import AirplayNotifierConfigFlow
 from custom_components.airplay_notifier.const import (
     CONF_MEDIA_PLAYER,
@@ -54,6 +57,20 @@ def test_manifest_keys_and_lists_are_sorted() -> None:
     assert keys[2:] == sorted(keys[2:])
     for key in ("after_dependencies", "codeowners", "dependencies", "requirements"):
         assert manifest[key] == sorted(manifest[key]), key
+
+
+async def test_removing_the_legacy_service_tolerates_a_missing_registry(
+    hass: HomeAssistant,
+) -> None:
+    """The unload hook is safe when `notify` never registered anything.
+
+    `hass.data[NOTIFY_SERVICES]` only exists once the notify component has
+    set up its legacy machinery, and the hook can run on a teardown path
+    where setup never got that far.
+    """
+    _async_remove_legacy_service(hass, "no-such-entry", "airplay_nothing")
+
+    assert not hass.services.has_service("notify", "airplay_nothing")
 
 
 async def test_migrate_entry_is_a_no_op_for_the_current_version(

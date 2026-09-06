@@ -391,6 +391,39 @@ async def test_overlapping_announcements_restore_the_original_volume(
     assert [call.data["volume_level"] for call in volume_calls] == [0.9, 0.9, 0.3]
 
 
+@pytest.mark.parametrize(
+    ("attributes", "state_exists"),
+    [
+        pytest.param({}, True, id="no-volume_level-attribute"),
+        pytest.param({"volume_level": None}, True, id="volume_level-unknown"),
+        pytest.param({}, False, id="player-has-no-state"),
+    ],
+)
+async def test_no_restore_is_armed_when_the_original_volume_is_unknown(
+    hass: HomeAssistant, attributes: dict[str, object], state_exists: bool
+) -> None:
+    """Nothing is scheduled when there is no volume to go back to.
+
+    Guessing a "previous" volume would be worse than leaving the player
+    where the announcement put it, and an armed timer with nothing to
+    restore would still fire.
+    """
+    if state_exists:
+        hass.states.async_set(DIRECT_PLAYER, "idle", attributes)
+    async_mock_service(hass, "tts", "speak")
+    volume_calls = _mock_volume_set(hass, DIRECT_PLAYER)
+
+    state = VolumeRestoreState()
+    await async_deliver_message(hass, _options(volume=0.9), "Loud", volume_state=state)
+    await hass.async_block_till_done()
+
+    assert state.cancel_restore is None
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=30))
+    await hass.async_block_till_done()
+
+    assert [call.data["volume_level"] for call in volume_calls] == [0.9]
+
+
 async def test_pending_restore_can_be_cancelled(hass: HomeAssistant) -> None:
     """`async_cancel_pending_restore` disarms the timer (used on entry unload)."""
     hass.states.async_set(DIRECT_PLAYER, "idle", {"volume_level": 0.3})
