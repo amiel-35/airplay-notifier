@@ -235,9 +235,9 @@ a player to finish talking.
 ### `VolumeRestoreState`: what a scheduled restore has to survive
 
 Scheduling rather than awaiting means the volume window outlives the call
-that opened it, and three things can happen inside it. All three are
-handled by one `VolumeRestoreState` per config entry (one entry = one
-player), living on `entry.runtime_data`:
+that opened it, and five things can happen inside it. All five are handled
+by one `VolumeRestoreState` per config entry (one entry = one player),
+living on `entry.runtime_data`:
 
 - **the announcement fails.** `tts.speak` can raise (unknown engine, a
   player that refuses `play_media`). The restore is armed in a `finally`,
@@ -252,10 +252,25 @@ player), living on `entry.runtime_data`:
   being discarded, so every overlapping announcement armed its own restore
   and they all fired. Exactly one is armed at a time
   (`_async_schedule_restore` cancels the previous one first), and the
-  handle is registered with `entry.async_on_unload`
-  (`VolumeRestoreState.async_cancel_pending_restore`) so unloading the
-  entry disarms it instead of moving a player's volume on behalf of an
-  integration that is gone.
+  handle is disarmed on unload instead of moving a player's volume on
+  behalf of an integration that is gone.
+- **an announcement starts while a restore is already in flight.** The
+  restore used to clear `original_volume` and *then* call
+  `media_player.volume_set`, outside the lock. A call landing between the
+  two read the still-raised level as the "original" and, when its own
+  restore fired, made announcement volume permanent. The restore now runs
+  entirely inside `state.lock` and clears `original_volume` only once the
+  speaker is actually back down, so the next announcement waits and reads
+  the true original.
+- **the entry is unloaded or reloaded mid-announcement.** Merely cancelling
+  the armed restore was silently destructive: an options change *reloads*
+  the entry, and the reloaded entry starts from a fresh, empty
+  `VolumeRestoreState` — nothing was left to put the speaker back down.
+  `VolumeRestoreState.async_flush_pending_restore` is registered with
+  `entry.async_on_unload` instead: it performs the pending restore
+  immediately, inside the lock and best effort (a failing `volume_set` is
+  logged, never raised, so a merely offline speaker cannot mark the entry
+  `FAILED_UNLOAD`), and cancels the timer afterwards.
 
 The Music Assistant strategy needs none of this: `announce_volume` is
 handled inside Music Assistant's own player library.

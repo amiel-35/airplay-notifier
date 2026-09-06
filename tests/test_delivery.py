@@ -511,6 +511,70 @@ async def test_announcement_during_an_in_flight_restore_waits_for_it(
     assert state.original_volume is None
 
 
+async def test_flush_pending_restore_restores_immediately(hass: HomeAssistant) -> None:
+    """The unload/reload hook gives the volume back instead of dropping it."""
+    hass.states.async_set(DIRECT_PLAYER, "idle", {"volume_level": 0.3})
+    async_mock_service(hass, "tts", "speak")
+    volume_calls = _mock_volume_set(hass, DIRECT_PLAYER)
+
+    state = VolumeRestoreState()
+    await async_deliver_message(hass, _options(volume=0.9), "Loud", volume_state=state)
+    await hass.async_block_till_done()
+    assert state.cancel_restore is not None
+
+    await state.async_flush_pending_restore(hass)
+
+    assert [call.data["volume_level"] for call in volume_calls] == [0.9, 0.3]
+    assert state.cancel_restore is None
+    assert state.original_volume is None
+    assert state.restore_target is None
+
+    # And the timer it cancelled does not fire a second restore afterwards.
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=30))
+    await hass.async_block_till_done()
+    assert len(volume_calls) == 2
+
+
+async def test_flush_pending_restore_is_a_no_op_with_nothing_pending(
+    hass: HomeAssistant,
+) -> None:
+    """Unloading an entry that never spoke touches no volume."""
+    volume_calls = _mock_volume_set(hass, DIRECT_PLAYER)
+
+    await VolumeRestoreState().async_flush_pending_restore(hass)
+
+    assert volume_calls == []
+
+
+async def test_flush_pending_restore_survives_a_failing_volume_set(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A target going away during unload is logged, never raised.
+
+    Raising here would mark the whole config entry FAILED_UNLOAD over a
+    speaker that is merely offline.
+    """
+    hass.states.async_set(DIRECT_PLAYER, "idle", {"volume_level": 0.3})
+    async_mock_service(hass, "tts", "speak")
+    async_mock_service(hass, "media_player", "volume_set")
+
+    state = VolumeRestoreState()
+    await async_deliver_message(hass, _options(volume=0.9), "Loud", volume_state=state)
+    await hass.async_block_till_done()
+
+    hass.services.async_remove("media_player", "volume_set")
+    async_mock_service(
+        hass,
+        "media_player",
+        "volume_set",
+        raise_exception=HomeAssistantError("speaker is gone"),
+    )
+
+    await state.async_flush_pending_restore(hass)
+
+    assert "Could not restore the volume" in caplog.text
+
+
 @pytest.mark.parametrize(
     ("attributes", "state_exists"),
     [

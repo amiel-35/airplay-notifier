@@ -255,11 +255,14 @@ async def test_legacy_service_re_registers_after_reload(hass: HomeAssistant) -> 
 
 
 async def test_no_volume_restore_timer_survives_unload(hass: HomeAssistant) -> None:
-    """Unloading the entry disarms the pending volume restore.
+    """Unloading the entry performs the pending restore, then disarms it.
 
     The restore is scheduled, not awaited, so without an
     `entry.async_on_unload` hook it would still fire seconds later and move
-    the speaker's volume on behalf of an integration that is no longer there.
+    the speaker's volume on behalf of an integration that is no longer
+    there. Cancelling alone is not enough either — see
+    `test_options_reload_during_an_announcement_restores_the_volume` in
+    test_init.py — so the hook restores first and cancels afterwards.
     """
     hass.states.async_set(MEDIA_PLAYER, "idle", {"volume_level": 0.3})
 
@@ -283,10 +286,14 @@ async def test_no_volume_restore_timer_survives_unload(hass: HomeAssistant) -> N
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
 
+    # Restored on the spot, by the unload hook.
+    assert [call.data["volume_level"] for call in volume_calls] == [0.9, 0.3]
+
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=30))
     await hass.async_block_till_done()
 
-    assert len(volume_calls) == 1
+    # And the timer is gone: nothing moves the volume after the entry has.
+    assert len(volume_calls) == 2
 
 
 async def test_two_entries_get_distinct_entities_and_devices(

@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+    async_mock_service,
+)
 
 from custom_components.airplay_notifier import (
     _async_remove_legacy_service,
@@ -18,6 +24,7 @@ from custom_components.airplay_notifier.config_flow import AirplayNotifierConfig
 from custom_components.airplay_notifier.const import (
     CONF_MEDIA_PLAYER,
     CONF_TTS_ENTITY,
+    CONF_VOLUME,
     DOMAIN,
 )
 
@@ -116,3 +123,82 @@ async def test_migrate_entry_refuses_a_future_major_version(
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     assert entry.state is ConfigEntryState.MIGRATION_ERROR
+
+
+async def test_options_reload_during_an_announcement_restores_the_volume(
+    hass: HomeAssistant,
+) -> None:
+    """A reload inside the announcement window performs the pending restore.
+
+    Changing an option reloads the entry, which runs the `async_on_unload`
+    hooks. Cancelling the armed restore there and stopping was silently
+    destructive: the reloaded entry starts from a fresh, empty
+    `VolumeRestoreState`, so nothing was left to put the speaker back down
+    and it stayed at announcement volume for good.
+    """
+    hass.states.async_set(MEDIA_PLAYER, "idle", {"volume_level": 0.3})
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Living Room",
+        unique_id=MEDIA_PLAYER,
+        data={CONF_MEDIA_PLAYER: MEDIA_PLAYER, CONF_TTS_ENTITY: TTS_ENTITY},
+        options={CONF_VOLUME: 0.9},
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    async_mock_service(hass, "tts", "speak")
+    volume_calls = async_mock_service(hass, "media_player", "volume_set")
+
+    await hass.services.async_call(
+        "notify", "airplay_living_room", {"message": "Dinner is ready"}, blocking=True
+    )
+    await hass.async_block_till_done()
+
+    volume_state = entry.runtime_data.volume_state
+    assert [call.data["volume_level"] for call in volume_calls] == [0.9]
+    assert volume_state.cancel_restore is not None
+
+    # The user changes an option mid-announcement.
+    hass.config_entries.async_update_entry(entry, options={CONF_VOLUME: 0.5})
+    await hass.async_block_till_done()
+
+    assert [call.data["volume_level"] for call in volume_calls] == [0.9, 0.3]
+    assert volume_state.cancel_restore is None
+
+    # And the cancelled timer does not fire a second, stale restore.
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=30))
+    await hass.async_block_till_done()
+    assert len(volume_calls) == 2
+
+
+async def test_unload_restores_a_pending_volume(hass: HomeAssistant) -> None:
+    """Deleting/unloading an entry mid-announcement also gives the volume back."""
+    hass.states.async_set(MEDIA_PLAYER, "idle", {"volume_level": 0.3})
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Living Room",
+        unique_id=MEDIA_PLAYER,
+        data={CONF_MEDIA_PLAYER: MEDIA_PLAYER, CONF_TTS_ENTITY: TTS_ENTITY},
+        options={CONF_VOLUME: 0.9},
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    async_mock_service(hass, "tts", "speak")
+    volume_calls = async_mock_service(hass, "media_player", "volume_set")
+
+    await hass.services.async_call(
+        "notify", "airplay_living_room", {"message": "Dinner is ready"}, blocking=True
+    )
+    await hass.async_block_till_done()
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert [call.data["volume_level"] for call in volume_calls] == [0.9, 0.3]
+    assert entry.state is ConfigEntryState.NOT_LOADED

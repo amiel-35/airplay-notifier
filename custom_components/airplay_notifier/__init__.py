@@ -17,6 +17,7 @@ message actually gets spoken.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import partial
 
 from homeassistant.components.notify.const import DOMAIN as NOTIFY_DOMAIN
 from homeassistant.components.notify.legacy import NOTIFY_SERVICES
@@ -123,10 +124,18 @@ async def async_setup_entry(
     )
 
     entry.async_on_unload(entry.add_update_listener(_async_update_options))
-    # A volume restore is scheduled, not awaited: without this the timer
-    # would still fire (and move the player's volume) after the entry, and
-    # possibly the whole integration, is gone.
-    entry.async_on_unload(entry.runtime_data.volume_state.async_cancel_pending_restore)
+    # A volume restore is scheduled, not awaited, so it must not survive the
+    # entry: the timer would still fire (and move the player's volume) after
+    # the entry, and possibly the whole integration, is gone. Cancelling is
+    # not enough on its own — an options change *reloads* the entry, and a
+    # reload landing inside the announcement window would cancel the restore
+    # and never re-arm it. So a pending restore is performed immediately
+    # here, then disarmed. Coroutines are supported by `async_on_unload` and
+    # awaited before the unload completes (`homeassistant/config_entries.py`,
+    # `_async_process_on_unload`).
+    entry.async_on_unload(
+        partial(entry.runtime_data.volume_state.async_flush_pending_restore, hass)
+    )
     entry.async_on_unload(
         lambda: _async_remove_legacy_service(hass, entry.entry_id, legacy_service_name)
     )

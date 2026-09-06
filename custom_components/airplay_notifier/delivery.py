@@ -146,13 +146,47 @@ class VolumeRestoreState:
     def async_cancel_pending_restore(self) -> None:
         """Cancel the restore timer, if one is armed.
 
-        Registered with `entry.async_on_unload` so an unloaded entry never
-        leaves a timer behind that would move a player's volume minutes
-        later, after the integration is gone.
+        Used by `async_flush_pending_restore` (the unload hook) and by
+        `_async_schedule_restore`, so an unloaded entry never leaves a timer
+        behind that would move a player's volume minutes later, after the
+        integration is gone.
         """
         if self.cancel_restore is not None:
             self.cancel_restore()
             self.cancel_restore = None
+
+    async def async_flush_pending_restore(self, hass: HomeAssistant) -> None:
+        """Restore the player's volume *now*, then disarm the timer.
+
+        Registered with `entry.async_on_unload`. Cancelling the pending
+        restore on unload is not enough on its own: an options change
+        reloads the entry, and a reload landing inside the announcement
+        window used to cancel the armed restore and never re-arm it (the
+        reloaded entry starts from a fresh, empty `VolumeRestoreState`),
+        leaving the speaker stuck at announcement volume for good.
+
+        Best effort: the restore is attempted inside the lock, before
+        cancelling, and a failing `media_player.volume_set` (the target may
+        itself be going away) is logged rather than raised — an exception
+        here would mark the whole entry `FAILED_UNLOAD`.
+        """
+        async with self.lock:
+            self.async_cancel_pending_restore()
+            entity_id = self.restore_target
+            original_volume = self.original_volume
+            self.restore_target = None
+            self.original_volume = None
+            if entity_id is None or original_volume is None:
+                return
+            try:
+                await _async_set_volume(hass, entity_id, original_volume)
+            except HomeAssistantError as err:
+                _LOGGER.warning(
+                    "Could not restore the volume of %s to %.2f while unloading: %s",
+                    entity_id,
+                    original_volume,
+                    err,
+                )
 
 
 # Per-call `data` payload accepted by the legacy `notify.airplay_<name>`
@@ -483,7 +517,9 @@ async def _async_deliver_direct(
       second announcement starting while the first is still speaking would
       read the already-raised announcement volume and "restore" to it.
     - the restore is scheduled, never awaited, and its handle is kept so the
-      next overlapping announcement (or an entry unload) can cancel it.
+      next overlapping announcement can cancel it — or, on an entry unload
+      or an options reload, so `async_flush_pending_restore` can perform it
+      immediately instead of dropping it.
     - the restore itself also takes `state.lock` before touching the volume,
       so an announcement starting while a restore is in flight waits for the
       speaker to be back down before reading the "original" volume.

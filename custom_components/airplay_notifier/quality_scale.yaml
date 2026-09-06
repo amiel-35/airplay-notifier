@@ -103,8 +103,10 @@ rules:
     status: done
     comment: >-
       Platforms are unloaded, the legacy notify service is removed together
-      with its instance in hass.data, and the pending volume-restore timer
-      is cancelled.
+      with its instance in hass.data, and a pending volume restore is
+      performed immediately (inside the lock, best effort) before its timer
+      is cancelled — so an options reload during an announcement cannot
+      leave the speaker stuck at announcement volume.
   docs-configuration-parameters:
     status: done
     comment: Options table in the README, data_description for every field.
