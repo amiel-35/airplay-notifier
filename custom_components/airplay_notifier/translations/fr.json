@@ -45,6 +45,9 @@
     "entry_not_loaded": {
       "message": "L'entrée AirPlay Notifier associée à ce service notify n'est pas chargée."
     },
+    "invalid_call_data": {
+      "message": "Annonce refusée : la charge « data » de la notification est invalide ({error})."
+    },
     "invalid_source_entity": {
       "message": "Annonce refusée : « source_entity » vaut « {source_entity} », qui n'est pas un identifiant d'entité utilisable (domaine.objet attendu) ; la liste de refus n'a pas pu être vérifiée."
     },

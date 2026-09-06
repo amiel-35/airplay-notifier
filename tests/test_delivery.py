@@ -203,6 +203,63 @@ async def test_deny_list_raises_service_validation_error(hass: HomeAssistant) ->
     assert err.value.translation_key == "source_domain_denied"
 
 
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param({"volume": 1.5}, id="volume-above-1"),
+        pytest.param({"volume": -0.1}, id="volume-below-0"),
+        pytest.param({"volume": "loud"}, id="volume-not-a-number"),
+        pytest.param(
+            {"tts_entity": "media_player.kitchen"}, id="tts_entity-wrong-domain"
+        ),
+        pytest.param({"tts_entity": "not-an-entity"}, id="tts_entity-garbage"),
+        pytest.param({"voice": ["a", "b"]}, id="voice-wrong-type"),
+        pytest.param({"volumne": 0.5}, id="unknown-key-typo"),
+    ],
+)
+async def test_invalid_call_data_is_refused(
+    hass: HomeAssistant, data: dict[str, object]
+) -> None:
+    """A malformed per-call `data` payload refuses the call, loudly."""
+    hass.states.async_set(DIRECT_PLAYER, "idle", {})
+    speak_calls = async_mock_service(hass, "tts", "speak")
+
+    with pytest.raises(ServiceValidationError) as err:
+        await async_deliver_message(hass, _options(), "Hello", data)
+
+    assert err.value.translation_key == "invalid_call_data"
+    assert len(speak_calls) == 0
+
+
+async def test_call_data_voice_may_be_a_full_options_mapping(
+    hass: HomeAssistant,
+) -> None:
+    """`data.voice` given as a mapping is passed through as the TTS options."""
+    hass.states.async_set(DIRECT_PLAYER, "idle", {})
+    speak_calls = async_mock_service(hass, "tts", "speak")
+
+    await async_deliver_message(
+        hass, _options(), "Hello", {"voice": {"voice": "nova", "style": "calm"}}
+    )
+
+    assert speak_calls[0].data["options"] == {"voice": "nova", "style": "calm"}
+
+
+async def test_call_data_volume_is_coerced(hass: HomeAssistant) -> None:
+    """A volume given as a numeric string is accepted and coerced."""
+    hass.states.async_set(DIRECT_PLAYER, "idle", {"volume_level": 0.3})
+    async_mock_service(hass, "tts", "speak")
+    volume_calls = async_mock_service(hass, "media_player", "volume_set")
+
+    await async_deliver_message(hass, _options(), "Hello", {"volume": "0.4"})
+
+    assert volume_calls[0].data["volume_level"] == 0.4
+
+    # Let the scheduled restore run so no timer outlives the test.
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=30))
+    await hass.async_block_till_done()
+
+
 async def test_volume_is_set_and_restored(hass: HomeAssistant) -> None:
     """Direct strategy sets volume before speaking and restores it afterward."""
     hass.states.async_set(DIRECT_PLAYER, "idle", {"volume_level": 0.3})

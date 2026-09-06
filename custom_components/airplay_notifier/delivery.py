@@ -66,8 +66,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Final
 
+import voluptuous as vol
 from homeassistant.components import media_source, tts
 from homeassistant.components.media_player.browse_media import (
     async_process_play_media_url,
@@ -109,12 +110,60 @@ class AirplayNotifierOptions:
     media_player: str
     tts_entity: str
     language: str | None = None
-    voice: str | None = None
+    voice: str | dict[str, Any] | None = None
     volume: float | None = None
     restore_volume: bool = True
     strategy: str = STRATEGY_AUTO
     announce_prefix: str = ""
     deny_domains: list[str] = field(default_factory=list)
+
+
+# Per-call `data` payload accepted by the legacy `notify.airplay_<name>`
+# service. Unknown keys are rejected (voluptuous' default `PREVENT_EXTRA`)
+# so a typo such as `volumne:` fails loudly instead of being ignored and
+# speaking at the configured volume.
+#
+# `source_entity` is deliberately typed loosely here: it is normalised and
+# validated by `_normalise_source_entities`, which raises the dedicated,
+# translated `invalid_source_entity` refusal rather than a generic schema
+# error.
+CALL_DATA_SCHEMA: Final = vol.Schema(
+    {
+        vol.Optional(ATTR_VOLUME): vol.All(
+            vol.Coerce(float), vol.Range(min=0.0, max=1.0)
+        ),
+        vol.Optional(ATTR_LANGUAGE): cv.string,
+        vol.Optional(ATTR_VOICE): vol.Any(cv.string, dict),
+        vol.Optional(ATTR_TTS_ENTITY): cv.entity_domain(TTS_DOMAIN),
+        vol.Optional(ATTR_SOURCE_ENTITY): object,
+    }
+)
+
+
+def _validate_call_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Validate a per-call `data` payload, or refuse the call."""
+    try:
+        return dict(CALL_DATA_SCHEMA(data))
+    except vol.Invalid as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="invalid_call_data",
+            translation_placeholders={"error": str(err)},
+        ) from err
+
+
+def _tts_options(voice: str | dict[str, Any] | None) -> dict[str, Any] | None:
+    """Build the `options` mapping handed to the TTS engine.
+
+    A plain string is the engine-specific voice identifier and becomes
+    `{"voice": ...}`; a mapping is passed through as the complete TTS
+    options payload, for engines that accept more than a voice.
+    """
+    if voice is None:
+        return None
+    if isinstance(voice, dict):
+        return dict(voice) or None
+    return {ATTR_VOICE: voice}
 
 
 class AnnouncementDenied(ServiceValidationError):
@@ -230,7 +279,7 @@ async def _async_resolve_tts_url(
     message: str,
     tts_entity: str,
     language: str | None,
-    voice: str | None,
+    voice: str | dict[str, Any] | None,
     target_media_player: str,
 ) -> str:
     """Resolve `message` to a real, playable HTTP(S) URL.
@@ -238,7 +287,7 @@ async def _async_resolve_tts_url(
     See the module docstring for why this is required for the Music
     Assistant strategy.
     """
-    tts_options: dict[str, Any] | None = {ATTR_VOICE: voice} if voice else None
+    tts_options = _tts_options(voice)
     media_content_id = tts.generate_media_source_id(
         hass,
         message,
@@ -294,9 +343,7 @@ async def _async_deliver_direct(
             )
         await _async_set_volume(hass, options.media_player, volume)
 
-    tts_options: dict[str, Any] | None = (
-        {ATTR_VOICE: options.voice} if options.voice else None
-    )
+    tts_options = _tts_options(options.voice)
     await hass.services.async_call(
         TTS_DOMAIN,
         "speak",
@@ -365,7 +412,7 @@ async def async_deliver_message(
     `tts_entity`. `data.source_entity` is checked against `deny_domains`
     before anything else runs.
     """
-    data = data or {}
+    data = _validate_call_data(data or {})
     _check_deny_list(options, data)
 
     tts_entity = data.get(ATTR_TTS_ENTITY, options.tts_entity)

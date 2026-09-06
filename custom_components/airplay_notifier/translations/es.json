@@ -45,6 +45,9 @@
     "entry_not_loaded": {
       "message": "La entrada de AirPlay Notifier asociada a este servicio notify no está cargada."
     },
+    "invalid_call_data": {
+      "message": "Aviso rechazado: la carga «data» de la notificación no es válida ({error})."
+    },
     "invalid_source_entity": {
       "message": "Aviso rechazado: «source_entity» es «{source_entity}», que no es un identificador de entidad utilizable (se esperaba dominio.objeto), así que no se pudo comprobar la lista de denegación."
     },
