@@ -166,14 +166,23 @@ async def async_migrate_entry(
 ) -> bool:
     """Migrate a config entry to the current schema.
 
-    Nothing to do yet: the only schema in the wild is 1.1, which is what
-    `AirplayNotifierConfigFlow.VERSION`/`MINOR_VERSION` still declare. The
-    hook exists from the start so that the first real schema change is a
-    one-file edit rather than a redesign, and so a *downgrade* (an entry
-    stored by a newer version) is reported as a migration failure by core
-    instead of loading with unknown keys.
+    There is nothing to upgrade yet: the only schema in the wild is 1.1,
+    which is what `AirplayNotifierConfigFlow.VERSION`/`MINOR_VERSION` still
+    declare. The hook exists from the start so that the first real schema
+    change is a one-file edit rather than a redesign.
+
+    A *downgrade* is refused outright — both a newer major version and a
+    newer minor version of the same major. Core only calls this hook when
+    the stored version differs from the flow's, and it treats `False` as a
+    migration failure (`homeassistant/config_entries.py`,
+    `async_migrate_entry`: the entry lands in `MIGRATION_ERROR` instead of
+    being set up), which is what we want: an entry written by a newer
+    AirPlay Notifier may carry keys this code does not understand, and a
+    minor bump is by definition backwards-compatible *forwards only*.
     """
-    return entry.version == AirplayNotifierConfigFlow.VERSION
+    if entry.version != AirplayNotifierConfigFlow.VERSION:
+        return False
+    return entry.minor_version <= AirplayNotifierConfigFlow.MINOR_VERSION
 
 
 async def async_unload_entry(

@@ -368,11 +368,13 @@ voice, volume, restore behavior, strategy override, announce prefix, and
 the deny-list — is tunable afterward from the options flow without
 recreating the entry.
 
-`VERSION = 1` and `MINOR_VERSION = 1` are both declared, with a no-op
-`async_migrate_entry` in `__init__.py`. Core refuses to load an entry whose
-stored version is newer than the handler's, so declaring both from the
-start means a downgrade fails as a migration error rather than loading with
-unknown keys, and the first real schema change is a one-file edit.
+`VERSION = 1` and `MINOR_VERSION = 1` are both declared, with an
+`async_migrate_entry` in `__init__.py` that has nothing to upgrade yet and
+refuses every downgrade — a newer major version *and* a newer minor version
+of the same major both return `False`, which core turns into a
+`MIGRATION_ERROR` instead of setting the entry up. Declaring both from the
+start means a downgrade fails visibly rather than loading with unknown
+keys, and the first real schema change is a one-file edit.
 
 ## Entities, devices and naming
 

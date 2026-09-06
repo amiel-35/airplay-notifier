@@ -202,3 +202,30 @@ async def test_unload_restores_a_pending_volume(hass: HomeAssistant) -> None:
 
     assert [call.data["volume_level"] for call in volume_calls] == [0.9, 0.3]
     assert entry.state is ConfigEntryState.NOT_LOADED
+
+
+async def test_migrate_entry_refuses_a_future_minor_version(
+    hass: HomeAssistant,
+) -> None:
+    """A *minor* downgrade is refused too, not silently loaded.
+
+    A minor bump is backwards-compatible forwards only: an entry written by
+    a newer AirPlay Notifier may carry option keys this code does not
+    understand, and loading it anyway would quietly drop them on the next
+    options save.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Living Room",
+        unique_id=MEDIA_PLAYER,
+        version=AirplayNotifierConfigFlow.VERSION,
+        minor_version=AirplayNotifierConfigFlow.MINOR_VERSION + 1,
+        data={CONF_MEDIA_PLAYER: MEDIA_PLAYER, CONF_TTS_ENTITY: TTS_ENTITY},
+    )
+    entry.add_to_hass(hass)
+
+    assert await async_migrate_entry(hass, entry) is False
+
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.MIGRATION_ERROR
