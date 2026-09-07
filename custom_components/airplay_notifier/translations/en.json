@@ -24,6 +24,8 @@
       "reconfigure_successful": "AirPlay Notifier now speaks on the player you chose."
     },
     "error": {
+      "already_configured": "Another AirPlay Notifier entry already speaks on this media player. One entry manages one player.",
+      "not_a_music_assistant_player": "This player is not provided by Music Assistant, and this entry is set to the Music Assistant strategy. Choose a Music Assistant player, or change the strategy in the entry's settings first.",
       "unsupported_player": "This media player does not support playing media, so it can never speak an announcement. Choose another one."
     }
   },
@@ -60,7 +62,8 @@
     },
     "error": {
       "not_a_music_assistant_player": "This player is not provided by Music Assistant, so the Music Assistant strategy cannot reach it. Use Auto or Direct.",
-      "quiet_hours_incomplete": "Set both the start and the end of the quiet hours window, or leave both empty to disable it."
+      "quiet_hours_incomplete": "Set both the start and the end of the quiet hours window, or leave both empty to disable it.",
+      "quiet_volume_silent": "A quiet hours volume of 0 would speak silently. Leave it empty to refuse announcements during quiet hours instead."
     }
   },
   "exceptions": {

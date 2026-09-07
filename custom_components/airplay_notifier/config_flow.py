@@ -250,6 +250,13 @@ class AirplayNotifierConfigFlow(ConfigFlow, domain=DOMAIN):
           entry per player, still), which is why the duplicate check here
           has to ignore the entry being reconfigured — otherwise changing
           only the TTS engine would abort as `already_configured`.
+
+        The suitability checks of the user step both apply here, and the
+        second one applies to a *stored* choice: an entry whose strategy is
+        forced to `music_assistant` may not be moved onto a player Music
+        Assistant does not provide. The options form refuses that
+        combination, so the reconfigure step must not be a way in through
+        the back.
         """
         entry = self._get_reconfigure_entry()
         errors: dict[str, str] = {}
@@ -261,23 +268,37 @@ class AirplayNotifierConfigFlow(ConfigFlow, domain=DOMAIN):
             owner = self.hass.config_entries.async_entry_for_domain_unique_id(
                 DOMAIN, media_player
             )
+            settings = {**entry.data, **entry.options}
 
             if owner is not None and owner.entry_id != entry.entry_id:
                 errors[CONF_MEDIA_PLAYER] = "already_configured"
             elif (error := _media_player_error(self.hass, media_player)) is not None:
                 errors[CONF_MEDIA_PLAYER] = error
+            elif settings.get(
+                CONF_STRATEGY
+            ) == STRATEGY_MUSIC_ASSISTANT and not _is_music_assistant_player(
+                self.hass, media_player
+            ):
+                # The error belongs on the field the user just changed: the
+                # strategy is not on this form, and it is the player that
+                # is wrong for it.
+                errors[CONF_MEDIA_PLAYER] = "not_a_music_assistant_player"
             else:
-                # `async_update_reload_and_abort` logs a transitional notice
-                # while the entry also has an update listener
-                # (`homeassistant/config_entries.py`: "has an update listener
-                # and should use it for scheduling a reload", breaking in
-                # 2026.12.0). Both paths end in the same reload, and the
-                # listener — which is what makes an options change take
-                # effect — will be the only one left afterwards, so this
-                # keeps working either way.
-                return self.async_update_reload_and_abort(
-                    entry, unique_id=media_player, data_updates=user_input
+                # Deliberately *not* `async_update_reload_and_abort`: this
+                # entry has an update listener, which reloads it when its
+                # data changes, and the helper schedules a second reload on
+                # top of that — two reloads for one change, plus core's
+                # transitional notice ("has an update listener and should
+                # use it for scheduling a reload",
+                # `homeassistant/config_entries.py`, breaking in 2026.12.0).
+                # The listener is the mechanism core is steering everyone
+                # towards, and it is already here.
+                self.hass.config_entries.async_update_entry(
+                    entry,
+                    unique_id=media_player,
+                    data={**entry.data, **user_input},
                 )
+                return self.async_abort(reason="reconfigure_successful")
 
         return self.async_show_form(
             step_id="reconfigure",
@@ -326,11 +347,20 @@ class AirplayNotifierOptionsFlow(OptionsFlow):
             data = dict(user_input)
             data[CONF_DENY_DOMAINS] = _string_to_deny_domains(data[CONF_DENY_DOMAINS])
 
+            quiet_volume = data.get(CONF_QUIET_VOLUME)
+
             if (CONF_QUIET_START in data) != (CONF_QUIET_END in data):
                 # Half a window is ambiguous, and ignoring it silently
                 # would leave the user believing their nights are
                 # protected. Both bounds, or neither (which is off).
                 errors[CONF_QUIET_START] = "quiet_hours_incomplete"
+            elif quiet_volume is not None and quiet_volume == 0:
+                # Speaking at volume 0 tells the automation the
+                # announcement happened while nobody hears it. Emptying the
+                # field is how you ask for a refusal instead. (On a Music
+                # Assistant player 0 is not even reachable: it is clamped
+                # to 1 %, see docs/known-issues.md.)
+                errors[CONF_QUIET_VOLUME] = "quiet_volume_silent"
             elif data.get(
                 CONF_STRATEGY
             ) == STRATEGY_MUSIC_ASSISTANT and not _is_music_assistant_player(

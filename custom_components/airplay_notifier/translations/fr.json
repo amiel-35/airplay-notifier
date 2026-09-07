@@ -24,6 +24,8 @@
       "reconfigure_successful": "AirPlay Notifier énonce désormais sur le lecteur choisi."
     },
     "error": {
+      "already_configured": "Une autre entrée AirPlay Notifier parle déjà sur ce lecteur multimédia. Une entrée gère un lecteur.",
+      "not_a_music_assistant_player": "Ce lecteur n'est pas fourni par Music Assistant, et cette entrée est réglée sur la stratégie Music Assistant. Choisissez un lecteur Music Assistant, ou changez d'abord la stratégie dans les paramètres de l'entrée.",
       "unsupported_player": "Ce lecteur multimédia ne prend pas en charge la lecture de médias : il ne pourra jamais énoncer d'annonce. Choisissez-en un autre."
     }
   },
@@ -60,7 +62,8 @@
     },
     "error": {
       "not_a_music_assistant_player": "Ce lecteur n'est pas fourni par Music Assistant : la stratégie Music Assistant ne peut pas l'atteindre. Utilisez Auto ou Direct.",
-      "quiet_hours_incomplete": "Renseignez le début et la fin des heures calmes, ou laissez les deux vides pour les désactiver."
+      "quiet_hours_incomplete": "Renseignez le début et la fin des heures calmes, ou laissez les deux vides pour les désactiver.",
+      "quiet_volume_silent": "Un volume d'heures calmes à 0 parlerait en silence. Laissez le champ vide pour refuser les annonces pendant les heures calmes."
     }
   },
   "exceptions": {

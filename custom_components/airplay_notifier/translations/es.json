@@ -24,6 +24,8 @@
       "reconfigure_successful": "AirPlay Notifier ahora habla en el reproductor elegido."
     },
     "error": {
+      "already_configured": "Otra entrada de AirPlay Notifier ya habla en este reproductor multimedia. Una entrada gestiona un reproductor.",
+      "not_a_music_assistant_player": "Este reproductor no lo proporciona Music Assistant, y esta entrada usa la estrategia Music Assistant. Elija un reproductor de Music Assistant, o cambie antes la estrategia en los ajustes de la entrada.",
       "unsupported_player": "Este reproductor multimedia no admite la reproducción de medios, así que nunca podrá decir un aviso. Elige otro."
     }
   },
@@ -60,7 +62,8 @@
     },
     "error": {
       "not_a_music_assistant_player": "Este reproductor no lo proporciona Music Assistant, así que la estrategia Music Assistant no puede alcanzarlo. Usa Auto o Directo.",
-      "quiet_hours_incomplete": "Indica el inicio y el fin de las horas de silencio, o deja ambos vacíos para desactivarlas."
+      "quiet_hours_incomplete": "Indica el inicio y el fin de las horas de silencio, o deja ambos vacíos para desactivarlas.",
+      "quiet_volume_silent": "Un volumen de horas de silencio de 0 hablaría sin sonido. Déjelo vacío para rechazar los avisos durante las horas de silencio."
     }
   },
   "exceptions": {
