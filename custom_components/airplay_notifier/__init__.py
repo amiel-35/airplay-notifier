@@ -65,9 +65,10 @@ type AirplayNotifierConfigEntry = ConfigEntry[AirplayNotifierRuntimeData]
 def _build_options(entry: AirplayNotifierConfigEntry) -> AirplayNotifierOptions:
     """Merge entry data (setup-time) and options (editable later) into one config.
 
-    `media_player` and `tts_entity` are fixed at setup time (changing the
-    target player is a new config entry, not an option); everything else can
-    be tuned from the options flow without re-adding the entry.
+    `media_player` and `tts_entity` live in the entry's *data*: they are
+    set at setup time and changed through the reconfigure flow, which
+    reloads the entry. Everything else is options, tuned from the options
+    flow without re-adding the entry.
     """
     settings = {**entry.data, **entry.options}
     return AirplayNotifierOptions(

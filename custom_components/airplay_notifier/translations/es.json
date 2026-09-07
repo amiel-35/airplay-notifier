@@ -9,10 +9,19 @@
           "media_player": "Reproductor multimedia",
           "tts_entity": "Motor de texto a voz"
         }
+      },
+      "reconfigure": {
+        "title": "Cambiar el reproductor o el motor",
+        "description": "Haz que esta entrada de AirPlay Notifier apunte a otro reproductor u otro motor de texto a voz. Se conservan sus demás ajustes y el nombre de su servicio notify.",
+        "data": {
+          "media_player": "Reproductor multimedia",
+          "tts_entity": "Motor de texto a voz"
+        }
       }
     },
     "abort": {
-      "already_configured": "Este reproductor multimedia ya está configurado."
+      "already_configured": "Este reproductor multimedia ya está configurado.",
+      "reconfigure_successful": "AirPlay Notifier ahora habla en el reproductor elegido."
     },
     "error": {
       "unsupported_player": "Este reproductor multimedia no admite la reproducción de medios, así que nunca podrá decir un aviso. Elige otro."

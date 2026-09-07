@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from homeassistant import config_entries
 from homeassistant.components.media_player.const import MediaPlayerEntityFeature
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import ATTR_SUPPORTED_FEATURES, CONF_LANGUAGE
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -407,3 +408,33 @@ async def test_reconfigure_refuses_a_player_that_cannot_play_media(
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {CONF_MEDIA_PLAYER: "unsupported_player"}
     assert entry.data[CONF_MEDIA_PLAYER] == MEDIA_PLAYER
+
+
+async def test_reconfigure_reloads_a_loaded_entry_keeping_its_service_name(
+    hass: HomeAssistant, targets: None
+) -> None:
+    """A live entry picks the new targets up, under the same notify service.
+
+    The reload is what makes the change take effect: the runtime options
+    (and the notify entity's availability tracking) are rebuilt from the
+    entry on every setup. The legacy service keeps its name because the
+    title does — an `alert` pointing at `notify.airplay_living_room` goes
+    on working, now speaking on the new player.
+    """
+    hass.states.async_set(OTHER_PLAYER, "idle", {"friendly_name": "Kitchen"})
+    entry = _loaded_entry(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert hass.services.has_service("notify", "airplay_living_room")
+
+    result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_MEDIA_PLAYER: OTHER_PLAYER, CONF_TTS_ENTITY: TTS_ENTITY},
+    )
+    await hass.async_block_till_done()
+
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.runtime_data.options.media_player == OTHER_PLAYER
+    assert hass.services.has_service("notify", "airplay_living_room")

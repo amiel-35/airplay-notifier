@@ -9,10 +9,19 @@
           "media_player": "Lecteur multimédia",
           "tts_entity": "Moteur de synthèse vocale"
         }
+      },
+      "reconfigure": {
+        "title": "Changer d'appareil ou de moteur",
+        "description": "Faites pointer cette entrée AirPlay Notifier vers un autre lecteur ou un autre moteur de synthèse vocale. Ses autres réglages, et le nom de son service notify, sont conservés.",
+        "data": {
+          "media_player": "Lecteur multimédia",
+          "tts_entity": "Moteur de synthèse vocale"
+        }
       }
     },
     "abort": {
-      "already_configured": "Ce lecteur multimédia est déjà configuré."
+      "already_configured": "Ce lecteur multimédia est déjà configuré.",
+      "reconfigure_successful": "AirPlay Notifier énonce désormais sur le lecteur choisi."
     },
     "error": {
       "unsupported_player": "Ce lecteur multimédia ne prend pas en charge la lecture de médias : il ne pourra jamais énoncer d'annonce. Choisissez-en un autre."

@@ -199,6 +199,75 @@ class AirplayNotifierConfigFlow(ConfigFlow, domain=DOMAIN):
         )
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Point an existing entry at a different player or TTS engine.
+
+        The two setup-time fields are the only ones here; everything else
+        stays in the options flow, and both are kept by
+        `async_update_reload_and_abort`'s `data_updates`
+        (`homeassistant/config_entries.py`), which merges into the entry's
+        data and reloads it rather than replacing the entry.
+
+        Two things deliberately do *not* change:
+
+        - the entry title, and therefore the legacy `notify.airplay_<name>`
+          service name derived from it. Renaming that service silently
+          would break every `alert.notifiers:` that refers to it, so a
+          rename stays an explicit action by the user;
+        - the unique-id rule. The unique id follows the new player (one
+          entry per player, still), which is why the duplicate check here
+          has to ignore the entry being reconfigured — otherwise changing
+          only the TTS engine would abort as `already_configured`.
+        """
+        entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+        current: dict[str, Any] = {**entry.data}
+
+        if user_input is not None:
+            current = {**current, **user_input}
+            media_player = user_input[CONF_MEDIA_PLAYER]
+            owner = self.hass.config_entries.async_entry_for_domain_unique_id(
+                DOMAIN, media_player
+            )
+
+            if owner is not None and owner.entry_id != entry.entry_id:
+                errors[CONF_MEDIA_PLAYER] = "already_configured"
+            elif (error := _media_player_error(self.hass, media_player)) is not None:
+                errors[CONF_MEDIA_PLAYER] = error
+            else:
+                # `async_update_reload_and_abort` logs a transitional notice
+                # while the entry also has an update listener
+                # (`homeassistant/config_entries.py`: "has an update listener
+                # and should use it for scheduling a reload", breaking in
+                # 2026.12.0). Both paths end in the same reload, and the
+                # listener — which is what makes an options change take
+                # effect — will be the only one left afterwards, so this
+                # keeps working either way.
+                return self.async_update_reload_and_abort(
+                    entry, unique_id=media_player, data_updates=user_input
+                )
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_MEDIA_PLAYER, default=current[CONF_MEDIA_PLAYER]
+                    ): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="media_player")
+                    ),
+                    vol.Required(
+                        CONF_TTS_ENTITY, default=current[CONF_TTS_ENTITY]
+                    ): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain="tts")
+                    ),
+                }
+            ),
+            errors=errors,
+        )
+
     @staticmethod
     @callback
     def async_get_options_flow(

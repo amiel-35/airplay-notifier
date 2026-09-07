@@ -9,10 +9,19 @@
           "media_player": "Media player",
           "tts_entity": "Text-to-speech engine"
         }
+      },
+      "reconfigure": {
+        "title": "Change the player or engine",
+        "description": "Point this AirPlay Notifier entry at a different player or text-to-speech engine. Its other settings, and the name of its notify service, are kept.",
+        "data": {
+          "media_player": "Media player",
+          "tts_entity": "Text-to-speech engine"
+        }
       }
     },
     "abort": {
-      "already_configured": "This media player is already configured."
+      "already_configured": "This media player is already configured.",
+      "reconfigure_successful": "AirPlay Notifier now speaks on the player you chose."
     },
     "error": {
       "unsupported_player": "This media player does not support playing media, so it can never speak an announcement. Choose another one."
