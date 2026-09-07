@@ -5,7 +5,7 @@ target player and the TTS engine to speak with; both can be changed later
 through the reconfigure flow, which is also the only way to move an entry
 to a different player without losing its options. Everything else
 (language, voice, volume, restore behavior, strategy override, announce
-prefix, deny-list) is tuned through the options flow.
+prefix, deny-list, quiet hours) is tuned through the options flow.
 
 Two suitability checks run before an entry is created or changed
 (`test-before-configure`), both deliberately permissive when the
@@ -37,6 +37,9 @@ from .const import (
     CONF_ANNOUNCE_PREFIX,
     CONF_DENY_DOMAINS,
     CONF_MEDIA_PLAYER,
+    CONF_QUIET_END,
+    CONF_QUIET_START,
+    CONF_QUIET_VOLUME,
     CONF_RESTORE_VOLUME,
     CONF_STRATEGY,
     CONF_TTS_ENTITY,
@@ -151,6 +154,29 @@ def _options_schema(current: dict[str, Any]) -> vol.Schema:
                     current.get(CONF_DENY_DOMAINS, DEFAULT_DENY_DOMAINS)
                 ),
             ): selector.TextSelector(),
+            # Quiet hours: all three fields use `suggested_value` rather
+            # than `default`, so clearing one really does remove the key
+            # from the submitted input — which is how quiet hours are
+            # turned off again. `TimeSelector` validates through `cv.time`
+            # (`homeassistant/helpers/selector.py`) and cannot carry an
+            # "empty" value, and a slider cannot be emptied either, hence
+            # the box for the quiet volume.
+            vol.Optional(
+                CONF_QUIET_START,
+                description={"suggested_value": current.get(CONF_QUIET_START)},
+            ): selector.TimeSelector(),
+            vol.Optional(
+                CONF_QUIET_END,
+                description={"suggested_value": current.get(CONF_QUIET_END)},
+            ): selector.TimeSelector(),
+            vol.Optional(
+                CONF_QUIET_VOLUME,
+                description={"suggested_value": current.get(CONF_QUIET_VOLUME)},
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0.0, max=1.0, step=0.05, mode=selector.NumberSelectorMode.BOX
+                )
+            ),
         }
     )
 
@@ -164,8 +190,12 @@ class AirplayNotifierConfigFlow(ConfigFlow, domain=DOMAIN):
     # (`homeassistant/config_entries.py`, `async_migrate_entry` /
     # `_async_migrate_and_setup`), so both must exist from the start for a
     # downgrade to fail cleanly instead of silently.
+    # 1.2 (0.2.0): the quiet-hours option keys. Additive, and an absent
+    # key means "off" — but a 0.1.x build would ignore them silently and
+    # start speaking at 03:00, which is what the version stamp exists to
+    # refuse.
     VERSION = 1
-    MINOR_VERSION = 1
+    MINOR_VERSION = 2
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -296,7 +326,12 @@ class AirplayNotifierOptionsFlow(OptionsFlow):
             data = dict(user_input)
             data[CONF_DENY_DOMAINS] = _string_to_deny_domains(data[CONF_DENY_DOMAINS])
 
-            if data.get(
+            if (CONF_QUIET_START in data) != (CONF_QUIET_END in data):
+                # Half a window is ambiguous, and ignoring it silently
+                # would leave the user believing their nights are
+                # protected. Both bounds, or neither (which is off).
+                errors[CONF_QUIET_START] = "quiet_hours_incomplete"
+            elif data.get(
                 CONF_STRATEGY
             ) == STRATEGY_MUSIC_ASSISTANT and not _is_music_assistant_player(
                 self.hass, current[CONF_MEDIA_PLAYER]

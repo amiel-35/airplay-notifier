@@ -8,6 +8,7 @@ from pytest_homeassistant_custom_component.common import (
     async_mock_service,
 )
 
+from custom_components.airplay_notifier.config_flow import AirplayNotifierConfigFlow
 from custom_components.airplay_notifier.const import (
     CONF_MEDIA_PLAYER,
     CONF_TTS_ENTITY,
@@ -43,8 +44,10 @@ async def test_diagnostics_reports_resolved_options(
     assert diagnostics["legacy_service_name"] == "airplay_living_room"
     assert diagnostics["resolved_options"]["media_player"] == MEDIA_PLAYER
     assert diagnostics["resolved_options"]["tts_entity"] == TTS_ENTITY
-    assert diagnostics["entry"]["version"] == 1
-    assert diagnostics["entry"]["minor_version"] == 1
+    assert diagnostics["entry"]["version"] == AirplayNotifierConfigFlow.VERSION
+    assert (
+        diagnostics["entry"]["minor_version"] == AirplayNotifierConfigFlow.MINOR_VERSION
+    )
 
 
 async def test_diagnostics_without_runtime_data(hass: HomeAssistant) -> None:

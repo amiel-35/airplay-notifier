@@ -330,3 +330,34 @@ async def test_an_unavailable_target_still_loads_the_entry(
     await hass.async_block_till_done()
 
     assert entry.state is ConfigEntryState.LOADED
+
+
+async def test_migrate_entry_stamps_a_1_1_entry_as_current(
+    hass: HomeAssistant, targets: None
+) -> None:
+    """A 0.1.x entry loads unchanged and is re-stamped with the new minor.
+
+    1.1 → 1.2 only adds the quiet-hours option keys, and an absent key
+    already means "off", so there is nothing to rewrite. The stamp still
+    has to move: core never bumps it on the integration's behalf
+    (`homeassistant/config_entries.py`, `ConfigEntry.async_migrate`), and
+    the version is what makes a later downgrade refuse an entry whose
+    quiet hours this code would otherwise silently ignore.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Living Room",
+        unique_id=MEDIA_PLAYER,
+        version=1,
+        minor_version=1,
+        data={CONF_MEDIA_PLAYER: MEDIA_PLAYER, CONF_TTS_ENTITY: TTS_ENTITY},
+        options={CONF_VOLUME: 0.4},
+    )
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.minor_version == AirplayNotifierConfigFlow.MINOR_VERSION
+    assert entry.options == {CONF_VOLUME: 0.4}

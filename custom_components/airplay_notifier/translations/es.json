@@ -39,7 +39,10 @@
           "restore_volume": "Restaurar el volumen tras el aviso",
           "strategy": "Estrategia de entrega",
           "announce_prefix": "Prefijo del aviso",
-          "deny_domains": "Dominios de origen denegados"
+          "deny_domains": "Dominios de origen denegados",
+          "quiet_start": "Inicio de las horas de silencio",
+          "quiet_end": "Fin de las horas de silencio",
+          "quiet_volume": "Volumen en horas de silencio"
         },
         "data_description": {
           "language": "Déjalo vacío para usar el idioma predeterminado del motor de texto a voz.",
@@ -48,12 +51,16 @@
           "restore_volume": "Restaura el volumen anterior del reproductor una vez terminado el aviso. No se aplica a la estrategia Music Assistant, que gestiona ella misma el volumen de los avisos.",
           "strategy": "Auto detecta automáticamente los reproductores Music Assistant; Music Assistant y Direct fuerzan una vía de entrega concreta.",
           "announce_prefix": "Texto que se dice antes de cada mensaje, por ejemplo una palabra de aviso o «Atención».",
-          "deny_domains": "Dominios de entidad separados por comas. Una llamada cuyo data.source_entity pertenezca a uno de estos dominios se rechaza y se registra, nunca se dice en voz alta."
+          "deny_domains": "Dominios de entidad separados por comas. Una llamada cuyo data.source_entity pertenezca a uno de estos dominios se rechaza y se registra, nunca se dice en voz alta.",
+          "quiet_start": "Inicio del intervalo durante el cual los avisos se bajan de volumen o se rechazan. Deja ambas horas vacías para desactivar las horas de silencio.",
+          "quiet_end": "Fin del intervalo, excluido. Indica una hora anterior al inicio para un intervalo que cruza la medianoche, por ejemplo de 22:00 a 07:00.",
+          "quiet_volume": "Volumen con el que hablar durante las horas de silencio. Déjalo vacío para rechazar los avisos en lugar de decirlos en voz baja. Una llamada con prioridad critical se dice de todos modos."
         }
       }
     },
     "error": {
-      "not_a_music_assistant_player": "Este reproductor no lo proporciona Music Assistant, así que la estrategia Music Assistant no puede alcanzarlo. Usa Auto o Directo."
+      "not_a_music_assistant_player": "Este reproductor no lo proporciona Music Assistant, así que la estrategia Music Assistant no puede alcanzarlo. Usa Auto o Directo.",
+      "quiet_hours_incomplete": "Indica el inicio y el fin de las horas de silencio, o deja ambos vacíos para desactivarlas."
     }
   },
   "exceptions": {
@@ -71,6 +78,9 @@
     },
     "source_domain_denied": {
       "message": "Aviso rechazado en nombre de {source_entity}: el dominio «{domain}» está en los dominios de origen denegados ({deny_domains})."
+    },
+    "quiet_hours": {
+      "message": "Aviso rechazado: las horas de silencio están activas (de {quiet_start} a {quiet_end}) y no hay configurado un volumen para ellas."
     },
     "target_unavailable": {
       "message": "AirPlay Notifier no está listo: {entities} todavía no existe."

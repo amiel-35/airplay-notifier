@@ -818,6 +818,7 @@ async def test_quiet_hours_speak_at_the_quiet_volume(
             quiet_end=QUIET_END,
             quiet_volume=0.15,
             volume=0.6,
+            restore_volume=False,
         ),
         "Dishwasher finished",
     )
@@ -834,7 +835,12 @@ async def test_quiet_volume_applies_even_without_a_configured_volume(
 
     await async_deliver_message(
         hass,
-        _options(quiet_start=QUIET_START, quiet_end=QUIET_END, quiet_volume=0.1),
+        _options(
+            quiet_start=QUIET_START,
+            quiet_end=QUIET_END,
+            quiet_volume=0.1,
+            restore_volume=False,
+        ),
         "Dishwasher finished",
     )
 
@@ -849,7 +855,12 @@ async def test_a_per_call_volume_wins_over_the_quiet_volume(
 
     await async_deliver_message(
         hass,
-        _options(quiet_start=QUIET_START, quiet_end=QUIET_END, quiet_volume=0.1),
+        _options(
+            quiet_start=QUIET_START,
+            quiet_end=QUIET_END,
+            quiet_volume=0.1,
+            restore_volume=False,
+        ),
         "Dishwasher finished",
         {"volume": 0.5},
     )
@@ -888,7 +899,12 @@ async def test_critical_priority_bypasses_quiet_hours(
 
     await async_deliver_message(
         hass,
-        _options(quiet_start=QUIET_START, quiet_end=QUIET_END, volume=0.9),
+        _options(
+            quiet_start=QUIET_START,
+            quiet_end=QUIET_END,
+            volume=0.9,
+            restore_volume=False,
+        ),
         "Water leak detected",
         {"priority": "critical"},
     )
@@ -1010,19 +1026,17 @@ async def test_quiet_hours_reach_the_music_assistant_strategy_too(
 ) -> None:
     """The quiet volume becomes Music Assistant's `announce_volume`."""
     await _quiet_hass(hass, freezer, "23:30")
-    registry = er.async_get(hass)
-    registry.async_get_or_create(
-        "media_player", "music_assistant", "atv-uid", suggested_object_id="apple_tv"
-    )
+    ma_player = _register_ma_player(hass, "quiet-ma-speaker", "quiet_ma_speaker")
     announce_calls = async_mock_service(hass, "music_assistant", "play_announcement")
 
     with patch(
-        "custom_components.airplay_notifier.delivery.media_source.async_resolve_media",
-        return_value=PlayMedia("http://example.test/clip.mp3", "audio/mpeg"),
+        "custom_components.airplay_notifier.delivery._async_resolve_tts_url",
+        return_value="https://example.local/tts.mp3",
     ):
         await async_deliver_message(
             hass,
             _options(
+                media_player=ma_player,
                 quiet_start=QUIET_START,
                 quiet_end=QUIET_END,
                 quiet_volume=0.2,

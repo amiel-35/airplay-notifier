@@ -34,6 +34,9 @@ from .const import (
     CONF_DENY_DOMAINS,
     CONF_LANGUAGE,
     CONF_MEDIA_PLAYER,
+    CONF_QUIET_END,
+    CONF_QUIET_START,
+    CONF_QUIET_VOLUME,
     CONF_RESTORE_VOLUME,
     CONF_STRATEGY,
     CONF_TTS_ENTITY,
@@ -81,6 +84,9 @@ def _build_options(entry: AirplayNotifierConfigEntry) -> AirplayNotifierOptions:
         strategy=settings.get(CONF_STRATEGY, DEFAULT_STRATEGY),
         announce_prefix=settings.get(CONF_ANNOUNCE_PREFIX, DEFAULT_ANNOUNCE_PREFIX),
         deny_domains=list(settings.get(CONF_DENY_DOMAINS, DEFAULT_DENY_DOMAINS)),
+        quiet_start=settings.get(CONF_QUIET_START),
+        quiet_end=settings.get(CONF_QUIET_END),
+        quiet_volume=settings.get(CONF_QUIET_VOLUME),
     )
 
 
@@ -237,10 +243,11 @@ async def async_migrate_entry(
 ) -> bool:
     """Migrate a config entry to the current schema.
 
-    There is nothing to upgrade yet: the only schema in the wild is 1.1,
-    which is what `AirplayNotifierConfigFlow.VERSION`/`MINOR_VERSION` still
-    declare. The hook exists from the start so that the first real schema
-    change is a one-file edit rather than a redesign.
+    1.1 → 1.2 (0.2.0) added the quiet-hours option keys. Nothing stored
+    has to be rewritten — an absent key already means "off" — but the
+    stamp does have to move forward, because core never bumps it itself
+    (`homeassistant/config_entries.py`, `ConfigEntry.async_migrate`, which
+    only schedules a save once this hook returns `True`).
 
     A *downgrade* is refused outright — both a newer major version and a
     newer minor version of the same major. Core only calls this hook when
@@ -253,7 +260,12 @@ async def async_migrate_entry(
     """
     if entry.version != AirplayNotifierConfigFlow.VERSION:
         return False
-    return entry.minor_version <= AirplayNotifierConfigFlow.MINOR_VERSION
+    if entry.minor_version > AirplayNotifierConfigFlow.MINOR_VERSION:
+        return False
+    hass.config_entries.async_update_entry(
+        entry, minor_version=AirplayNotifierConfigFlow.MINOR_VERSION
+    )
+    return True
 
 
 async def async_unload_entry(

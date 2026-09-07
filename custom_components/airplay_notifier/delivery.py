@@ -70,6 +70,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from datetime import time
 from typing import Any, Final
 
 import voluptuous as vol
@@ -87,9 +88,11 @@ from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback, valid_ent
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv, entity_registry as er
 from homeassistant.helpers.event import async_call_later
+from homeassistant.util import dt as dt_util
 
 from .const import (
     ATTR_LANGUAGE,
+    ATTR_PRIORITY,
     ATTR_SOURCE_ENTITY,
     ATTR_TTS_ENTITY,
     ATTR_VOICE,
@@ -99,6 +102,7 @@ from .const import (
     MA_MIN_ANNOUNCE_VOLUME,
     MIN_RESTORE_DELAY_SECONDS,
     MUSIC_ASSISTANT_DOMAIN,
+    PRIORITY_CRITICAL,
     RESTORE_DELAY_PADDING_SECONDS,
     SERVICE_PLAY_ANNOUNCEMENT,
     SERVICE_SPEAK,
@@ -106,6 +110,7 @@ from .const import (
     STRATEGY_AUTO,
     STRATEGY_DIRECT,
     STRATEGY_MUSIC_ASSISTANT,
+    VALID_PRIORITIES,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -124,6 +129,9 @@ class AirplayNotifierOptions:
     strategy: str = STRATEGY_AUTO
     announce_prefix: str = ""
     deny_domains: list[str] = field(default_factory=list)
+    quiet_start: str | None = None
+    quiet_end: str | None = None
+    quiet_volume: float | None = None
 
 
 @dataclass(slots=True)
@@ -207,6 +215,7 @@ CALL_DATA_SCHEMA: Final = vol.Schema(
         vol.Optional(ATTR_VOICE): vol.Any(cv.string, dict),
         vol.Optional(ATTR_TTS_ENTITY): cv.entity_domain(TTS_DOMAIN),
         vol.Optional(ATTR_SOURCE_ENTITY): object,
+        vol.Optional(ATTR_PRIORITY): vol.In(VALID_PRIORITIES),
     }
 )
 
@@ -250,6 +259,112 @@ class AnnouncementDenied(ServiceValidationError):
     (`homeassistant/exceptions.py`). Every instance carries a
     `translation_key` resolved from this integration's `exceptions` section.
     """
+
+
+class QuietHoursRefusal(ServiceValidationError):
+    """Raised when an announcement falls inside the quiet-hours window.
+
+    Deliberately *not* an `AnnouncementDenied`: the deny-list refuses a
+    message because of where it came from and logs a warning about a
+    misconfigured automation, while this refuses a message because of
+    *when* it arrived, which is the configuration working as intended. The
+    two must not share a log line, and only one of them means something is
+    wrong.
+    """
+
+
+def _quiet_window(options: AirplayNotifierOptions) -> tuple[time, time] | None:
+    """Return the configured quiet window, or `None` when there is none.
+
+    Both bounds are required. Half a window is refused by the options form
+    (`quiet_hours_incomplete`), and an entry that carries one anyway — an
+    older entry, a hand-edited `.storage` file — must not start silencing
+    announcements on the strength of a bound whose other half is unknown.
+
+    A zero-length window (`start == end`) is `None` too: with a half-open
+    window, "from 22:00 until 22:00" contains no instant at all, and
+    reading it as "always quiet" would silence a whole installation on a
+    slip of the form.
+
+    The stored values come from a `TimeSelector`, which validates through
+    `cv.time` (`homeassistant/helpers/selector.py`, `TimeSelector`), so
+    they parse; `dt_util.parse_time` returning `None` can only mean a
+    hand-written value, and is treated as no window rather than an error
+    raised on the announcement path.
+    """
+    if options.quiet_start is None or options.quiet_end is None:
+        return None
+    start = dt_util.parse_time(options.quiet_start)
+    end = dt_util.parse_time(options.quiet_end)
+    if start is None or end is None or start == end:
+        return None
+    return start, end
+
+
+def _in_quiet_window(now: time, start: time, end: time) -> bool:
+    """Return whether `now` falls in the half-open window `[start, end)`.
+
+    Half-open so that a window ending at 07:00 is over at 07:00 sharp, and
+    two adjacent windows would not overlap. `start > end` is a window that
+    crosses midnight — the ordinary case for "the night".
+    """
+    if start < end:
+        return start <= now < end
+    return now >= start or now < end
+
+
+def _quiet_hours_volume(
+    options: AirplayNotifierOptions,
+    data: dict[str, Any],
+    volume: float | None,
+) -> float | None:
+    """Return the volume to speak at, or refuse the call for quiet hours.
+
+    Precedence inside the window, highest first:
+
+    1. `data.priority: critical` — the call is let through untouched, at
+       whatever volume it would have used anyway. A water-leak alert has
+       to wake the house.
+    2. no `quiet_volume` configured — the call is refused. Speaking at the
+       normal volume would defeat the point, and speaking silently would
+       be a lie.
+    3. `data.volume` — an explicit per-call choice wins over
+       `quiet_volume`. Note this decides *how loud*, never *whether*: a
+       call that set a volume but not a priority is still refused by (2),
+       otherwise every automation that happens to set a volume would opt
+       itself out of quiet hours.
+    4. `quiet_volume`.
+    """
+    window = _quiet_window(options)
+    if window is None or data.get(ATTR_PRIORITY) == PRIORITY_CRITICAL:
+        return volume
+
+    start, end = window
+    if not _in_quiet_window(dt_util.now().time(), start, end):
+        return volume
+
+    if options.quiet_volume is None:
+        # INFO, not WARNING: this is the configuration doing its job. The
+        # refusal still reaches the caller as an error, so an automation
+        # does not silently believe it spoke.
+        _LOGGER.info(
+            "Refused to speak on %s: quiet hours are in effect (%s-%s) and no "
+            "quiet volume is configured",
+            options.media_player,
+            options.quiet_start,
+            options.quiet_end,
+        )
+        raise QuietHoursRefusal(
+            translation_domain=DOMAIN,
+            translation_key="quiet_hours",
+            translation_placeholders={
+                "quiet_start": str(options.quiet_start),
+                "quiet_end": str(options.quiet_end),
+            },
+        )
+
+    per_call: float | None = data.get(ATTR_VOLUME)
+    return options.quiet_volume if per_call is None else per_call
 
 
 def _effective_message(options: AirplayNotifierOptions, message: str) -> str:
@@ -623,7 +738,8 @@ async def async_deliver_message(
 
     `data` may override, per call: `volume`, `language`, `voice`,
     `tts_entity`. `data.source_entity` is checked against `deny_domains`
-    before anything else runs.
+    before anything else runs, and `data.priority` decides whether the
+    call is exempt from quiet hours (see `_quiet_hours_volume`).
 
     `volume_state` is the config entry's shared `VolumeRestoreState` (from
     `entry.runtime_data`). Callers should always pass it: it is what makes
@@ -637,7 +753,7 @@ async def async_deliver_message(
     tts_entity = data.get(ATTR_TTS_ENTITY, options.tts_entity)
     language = data.get(ATTR_LANGUAGE, options.language)
     voice = data.get(ATTR_VOICE, options.voice)
-    volume = data.get(ATTR_VOLUME, options.volume)
+    volume = _quiet_hours_volume(options, data, data.get(ATTR_VOLUME, options.volume))
 
     call_options = AirplayNotifierOptions(
         media_player=options.media_player,
@@ -649,6 +765,9 @@ async def async_deliver_message(
         strategy=options.strategy,
         announce_prefix=options.announce_prefix,
         deny_domains=options.deny_domains,
+        quiet_start=options.quiet_start,
+        quiet_end=options.quiet_end,
+        quiet_volume=options.quiet_volume,
     )
 
     full_message = _effective_message(options, message)

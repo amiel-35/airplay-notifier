@@ -39,7 +39,10 @@
           "restore_volume": "Restaurer le volume après l'annonce",
           "strategy": "Stratégie de diffusion",
           "announce_prefix": "Préfixe d'annonce",
-          "deny_domains": "Domaines source refusés"
+          "deny_domains": "Domaines source refusés",
+          "quiet_start": "Début des heures calmes",
+          "quiet_end": "Fin des heures calmes",
+          "quiet_volume": "Volume des heures calmes"
         },
         "data_description": {
           "language": "Laisser vide pour utiliser la langue par défaut du moteur de synthèse vocale.",
@@ -48,12 +51,16 @@
           "restore_volume": "Restaure le volume précédent du lecteur une fois l'annonce terminée. Ne s'applique pas à la stratégie Music Assistant, qui gère elle-même le volume des annonces.",
           "strategy": "Auto détecte automatiquement les lecteurs Music Assistant ; Music Assistant et Direct imposent un mode de diffusion.",
           "announce_prefix": "Texte énoncé avant chaque message, par exemple un mot d'alerte ou « Attention ».",
-          "deny_domains": "Domaines d'entité séparés par des virgules. Un appel dont le data.source_entity appartient à l'un de ces domaines est refusé et journalisé, jamais énoncé."
+          "deny_domains": "Domaines d'entité séparés par des virgules. Un appel dont le data.source_entity appartient à l'un de ces domaines est refusé et journalisé, jamais énoncé.",
+          "quiet_start": "Début de la plage pendant laquelle les annonces sont atténuées ou refusées. Laisser les deux heures vides pour désactiver les heures calmes.",
+          "quiet_end": "Fin de la plage, exclue. Indiquer une heure antérieure au début pour une plage qui passe minuit, par exemple 22:00 à 07:00.",
+          "quiet_volume": "Volume d'énonciation pendant les heures calmes. Laisser vide pour refuser les annonces plutôt que de les énoncer doucement. Un appel de priorité critical est énoncé dans tous les cas."
         }
       }
     },
     "error": {
-      "not_a_music_assistant_player": "Ce lecteur n'est pas fourni par Music Assistant : la stratégie Music Assistant ne peut pas l'atteindre. Utilisez Auto ou Direct."
+      "not_a_music_assistant_player": "Ce lecteur n'est pas fourni par Music Assistant : la stratégie Music Assistant ne peut pas l'atteindre. Utilisez Auto ou Direct.",
+      "quiet_hours_incomplete": "Renseignez le début et la fin des heures calmes, ou laissez les deux vides pour les désactiver."
     }
   },
   "exceptions": {
@@ -71,6 +78,9 @@
     },
     "source_domain_denied": {
       "message": "Annonce refusée au nom de {source_entity} : le domaine « {domain} » figure dans les domaines source refusés ({deny_domains})."
+    },
+    "quiet_hours": {
+      "message": "Annonce refusée : les heures calmes sont en vigueur ({quiet_start} à {quiet_end}) et aucun volume d'heures calmes n'est configuré."
     },
     "target_unavailable": {
       "message": "AirPlay Notifier n'est pas prêt : {entities} n'existe pas encore."

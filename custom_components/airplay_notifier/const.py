@@ -29,6 +29,9 @@ CONF_RESTORE_VOLUME: Final = "restore_volume"
 CONF_STRATEGY: Final = "strategy"
 CONF_ANNOUNCE_PREFIX: Final = "announce_prefix"
 CONF_DENY_DOMAINS: Final = "deny_domains"
+CONF_QUIET_START: Final = "quiet_start"
+CONF_QUIET_END: Final = "quiet_end"
+CONF_QUIET_VOLUME: Final = "quiet_volume"
 
 # Strategies.
 STRATEGY_AUTO: Final = "auto"
@@ -55,6 +58,15 @@ ATTR_LANGUAGE: Final = "language"
 ATTR_VOICE: Final = "voice"
 ATTR_TTS_ENTITY: Final = "tts_entity"
 ATTR_SOURCE_ENTITY: Final = "source_entity"
+ATTR_PRIORITY: Final = "priority"
+
+# `priority` is a closed set rather than a free string: only `critical`
+# does anything (it bypasses quiet hours), and a typo in a value that
+# decides whether a 3am alarm is spoken must fail the call rather than
+# quietly behave like `normal`.
+PRIORITY_NORMAL: Final = "normal"
+PRIORITY_CRITICAL: Final = "critical"
+VALID_PRIORITIES: Final[tuple[str, ...]] = (PRIORITY_NORMAL, PRIORITY_CRITICAL)
 
 # Heuristic used to size the volume-restore delay when a strategy cannot
 # report when playback actually finished (see docs/ARCHITECTURE.md).
