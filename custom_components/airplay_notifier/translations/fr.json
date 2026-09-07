@@ -86,7 +86,7 @@
       "message": "Annonce refusée sur {player} : les heures calmes sont en vigueur ({start} à {end}) et aucun volume d'heures calmes n'est configuré."
     },
     "target_unavailable": {
-      "message": "AirPlay Notifier n'est pas prêt : {entities} n'existe pas encore."
+      "message": "AirPlay Notifier n'est pas prêt. Entités introuvables dans Home Assistant : {entities}."
     }
   },
   "selector": {

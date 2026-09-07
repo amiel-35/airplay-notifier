@@ -53,15 +53,21 @@ from the entry's **Configure** option:
 | Announcement prefix | *(none)* | Spoken before every message, e.g. a chime word. |
 | Denied source domains | `alarm_control_panel, lock` | A call whose `data.source_entity` is in one of these domains is refused and logged — never spoken. |
 | Quiet hours start / end | *(off)* | Leave both empty to disable. The end is excluded, and an end earlier than the start means a window that crosses midnight (22:00 → 07:00 is "the night"). |
-| Quiet hours volume | *(none)* | Volume to speak at during quiet hours. Leave it empty to refuse announcements outright instead. |
+| Quiet hours volume | *(none)* | Volume to speak at during quiet hours. Leave it empty to refuse announcements outright instead; 0 is refused by the form, since a silent announcement is never what you want. |
 
 Per-call `data` overrides (legacy `notify.airplay_<name>` service only —
 see below): `volume` (0-1), `language`, `voice` (a voice id, or a mapping
 passed to the engine as its full `options` payload), `tts_entity` (a `tts.*`
-entity id), `priority` (`normal` or `critical`). The payload is
+entity id), `priority` (`info`, `normal`, `high` or `critical`, exactly and
+in lower case — the Notify Switchboard contract's set). The payload is
 schema-validated: an out-of-range volume, a `tts_entity` from the wrong
 domain, an unknown priority or an unknown key fails the call with a clear
 error instead of being ignored.
+
+Only `critical` does anything: it bypasses quiet hours. `info`, `normal`
+and `high` are accepted so an automation written against the contract is
+never refused for a valid value, and `high` deliberately does **not** wake
+the house.
 
 ### Quiet hours
 
@@ -208,8 +214,8 @@ it.
 | Symptom | Likely cause and fix |
 |---|---|
 | The entry shows **Failed to set up** / **Retrying setup** | The media player or the TTS engine is not in Home Assistant's state machine — renamed, removed, or its integration has not started. The error names the missing entity; fix it, or use **Reconfigure** to point the entry at what exists now. |
-| The notify entity is **unavailable** | The player or the TTS engine is `unavailable` (speaker off, engine down). The integration says so instead of accepting calls that would fail. It recovers on its own; the log has one `INFO` line for each direction. |
-| `notify.airplay_<name>` does not exist | The name follows the **entry title**, not the player's entity id, and it changes when you rename the entry. Check the exact name in Developer tools → Actions. If two entries have the same title, the second one's service is numbered (`..._2`). |
+| The notify entity is **unavailable** | The player or the TTS engine is `unavailable` (speaker off, engine down). It recovers on its own; the log has one `INFO` line for each direction. Careful: Home Assistant *skips* an unavailable entity rather than failing the call, so `notify.send_message` succeeds, speaks nothing, and logs `Referenced entities … are missing or not currently available`. The legacy `notify.airplay_<name>` service is unaffected — it speaks, or it raises. See [known issues](docs/known-issues.md). |
+| `notify.airplay_<name>` does not exist | The name follows the **entry title**, not the player's entity id, and it changes only when you rename the entry. Check the exact name in Developer tools → Actions. If two entries have the same title, one of them is numbered (`..._2`), and that name then belongs to it for good. If the log says the name is already in use, another service registered it first: rename the entry. |
 | Nothing is spoken and the log says the announcement was refused | Either `data.source_entity` is in **Denied source domains** (security is never spoken), or quiet hours are in effect with no quiet hours volume set. Both refusals name themselves in the message. |
 | Nothing is spoken at night only | Quiet hours. Set a quiet hours volume to speak quietly instead of refusing, or send the call with `data.priority: critical`. |
 | An announcement fails with `Service not supported` | The target player does not support `play_media`. Pick another player: this one cannot speak. |

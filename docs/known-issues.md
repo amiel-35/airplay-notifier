@@ -98,9 +98,48 @@ renames `notify.airplay_<name>`, and anything referencing the old name in
 that a change of speaker cannot silently break an alert.
 
 Two entries whose titles slugify identically get numbered service names
-(`airplay_bedroom`, `airplay_bedroom_2`) in creation order. The one case
-where a name moves on its own is deleting the earlier of two colliding
-entries: the survivor takes the unsuffixed name at its next reload.
+(`airplay_bedroom`, `airplay_bedroom_2`). The name an entry ends up with is
+stored on the entry itself and never moves again: a reconfigure, a reload,
+a restart, disabling another entry or **deleting** the entry that holds the
+plain name all leave it exactly as it was. A rename is the only thing that
+changes it.
+
+Two corollaries:
+
+- a disabled entry keeps its name reserved. That is deliberate — you will
+  re-enable it one day, and it should find its own `alert.notifiers:`
+  target waiting rather than taken by an entry created in the meantime;
+- renaming an entry onto a name another entry already holds gets you the
+  next free number, not the name itself. Nothing is ever taken away from an
+  entry that already has it.
+
+If a name is unavailable for some other reason — another integration
+registered `notify.airplay_<something>` first — the entry logs an `ERROR`
+naming it and loads anyway, without a legacy service. Its notify **entity**
+still works; rename the entry to give it a name of its own.
+
+## An unavailable notify entity silently skips `notify.send_message`
+
+While the player or the TTS engine is `unavailable`, the `notify.<player>`
+entity is `unavailable` too — and Home Assistant does not fail a call that
+targets it. `async_extract_referenced_entity_ids` filters the candidates
+down to the available ones
+(`homeassistant/helpers/service.py`, `entity_candidates = [e for e in
+entity_candidates if e.available]`, line 722 in 2026.9.1) and
+`SelectedEntities.log_missing` (`homeassistant/helpers/target.py:136`)
+reports the remainder as a `WARNING`:
+
+```
+WARNING homeassistant.helpers.service: Referenced entities
+notify.living_room are missing or not currently available
+```
+
+So `notify.send_message` on an unavailable entity **succeeds and speaks
+nothing**. An automation that only checks whether the action failed will
+believe it announced something. Check the entity's availability in a
+condition if that matters to you, or use the legacy
+`notify.airplay_<name>` service, which is a plain service with no
+availability to filter on and which therefore either speaks or raises.
 
 ## Quiet hours use Home Assistant's time zone, and only at call time
 

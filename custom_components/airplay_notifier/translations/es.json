@@ -86,7 +86,7 @@
       "message": "Aviso rechazado en {player}: las horas de silencio están activas (de {start} a {end}) y no hay configurado un volumen para ellas."
     },
     "target_unavailable": {
-      "message": "AirPlay Notifier no está listo: {entities} todavía no existe."
+      "message": "AirPlay Notifier no está listo. Entidades no encontradas en Home Assistant: {entities}."
     }
   },
   "selector": {

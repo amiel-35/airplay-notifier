@@ -820,3 +820,49 @@ async def test_a_name_held_elsewhere_is_neither_stolen_nor_retracted(
 
     # The service this entry never registered is still there.
     assert hass.services.has_service("notify", "airplay_living_room")
+
+
+async def test_send_message_to_the_unavailable_entity_is_skipped_not_raised(
+    hass: HomeAssistant, targets: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Core drops an unavailable entity from the call; it does not fail it.
+
+    `homeassistant/helpers/service.py:722` filters the candidates down to
+    `e.available`, and `SelectedEntities.log_missing`
+    (`homeassistant/helpers/target.py:136`) reports what is left over as
+    "missing or not currently available" — a `WARNING`, not an exception.
+    So `notify.send_message` on this entity while the speaker is off is a
+    call that *succeeds* and speaks nothing.
+
+    The legacy `notify.airplay_<name>` service is unaffected: it is a plain
+    service, not an entity service, so it has no availability to be
+    filtered on and refuses (or speaks) on its own terms.
+    """
+    entry = _make_entry()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    speak_calls = async_mock_service(hass, "tts", "speak")
+    hass.states.async_set(MEDIA_PLAYER, STATE_UNAVAILABLE, {})
+    await hass.async_block_till_done()
+    assert hass.states.get("notify.living_room").state == STATE_UNAVAILABLE
+
+    with caplog.at_level(logging.WARNING):
+        await hass.services.async_call(
+            "notify",
+            "send_message",
+            {"entity_id": "notify.living_room", "message": "Dinner is ready"},
+            blocking=True,
+        )
+    await hass.async_block_till_done()
+
+    assert not speak_calls
+    assert "missing or not currently available" in caplog.text
+
+    # The legacy service has no such filter and still speaks.
+    await hass.services.async_call(
+        "notify", "airplay_living_room", {"message": "Dinner is ready"}, blocking=True
+    )
+    await hass.async_block_till_done()
+    assert len(speak_calls) == 1

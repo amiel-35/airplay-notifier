@@ -75,6 +75,13 @@ entry's instance from `hass.data`. Without it an unloaded entry leaves a
 live service pointing at a dead entry, and every reload leaks one more
 instance.
 
+The hook removes only a name **this entry registered**. Core's early return
+is silent, so an entry that lost a name race looks exactly like one that
+won it; `hass.data[LEGACY_SERVICE_OWNERS]` (name → `entry_id`) is what
+tells the two apart, and it is claimed synchronously in
+`async_setup_entry` because the registration itself happens later, in the
+discovery task.
+
 ## Delivery strategies
 
 ### Strategy selection (`auto`)
@@ -300,10 +307,14 @@ exercised through the legacy service path.
 `delivery.CALL_DATA_SCHEMA` validates the whole payload before anything
 runs: `volume` as a float coerced into 0-1, `language` as a string, `voice`
 as either a voice id or a full TTS `options` mapping, `tts_entity` through
-`cv.entity_domain("tts")`, and `priority` through `vol.In(("normal",
-"critical"))` — a closed set, so a typo in the value that decides whether
-a 3am alarm is spoken fails the call instead of quietly behaving like
-`normal`. Unknown keys are rejected (voluptuous'
+`cv.entity_domain("tts")`, and `priority` through `vol.In` over the Notify
+Switchboard contract's four values — `info`, `normal`, `high`, `critical`,
+matched exactly and in lower case. A closed set, so a typo in the value
+that decides whether a 3am alarm is spoken fails the call instead of
+quietly behaving like `normal`; `Critical` is a typo like any other.
+Accepting all four is not acting on all four: only `critical` bypasses
+quiet hours, and `high` deliberately does not — "important" is not "wake
+the house". Unknown keys are rejected (voluptuous'
 `PREVENT_EXTRA` default) so a typo such as `volumne:` fails the call rather
 than being ignored and playing at the wrong volume. A schema failure
 becomes a `ServiceValidationError` with the `invalid_call_data` translation
@@ -389,20 +400,30 @@ Two checks run before an entry is created or changed
 
 ### The reconfigure flow keeps the entry's name
 
-`async_step_reconfigure` ends in `async_update_reload_and_abort`
-(`homeassistant/config_entries.py`) with `data_updates`, so the entry keeps
-its options and reloads onto the new targets. Two things deliberately do
-not move: the entry **title**, because the legacy `notify.airplay_<name>`
-service is derived from it and renaming it silently would break every
-`alert.notifiers:` pointing at it; and the unique-id rule, one entry per
-player — which is why the duplicate check ignores the entry being
-reconfigured, or changing only the TTS engine would abort as
-`already_configured`.
+`async_step_reconfigure` ends in `hass.config_entries.async_update_entry`
+followed by `async_abort(reason="reconfigure_successful")`, so the entry
+keeps its options (and its persisted service name) and reloads onto the new
+targets. Two things deliberately do not move: the entry **title**, because
+the legacy `notify.airplay_<name>` service is derived from it and renaming
+it silently would break every `alert.notifiers:` pointing at it; and the
+unique-id rule, one entry per player — which is why the duplicate check
+ignores the entry being reconfigured, or changing only the TTS engine
+would abort as `already_configured`.
 
-While an entry also has an update listener (which is what makes an options
-change take effect), `async_update_reload_and_abort` logs a transitional
-notice about scheduling the reload itself; both paths end in the same
-reload and the listener is the one that survives in 2026.12.
+Both suitability checks of the user step apply here too, and the second one
+applies to a *stored* choice: an entry whose strategy is forced to
+`music_assistant` cannot be moved onto a player Music Assistant does not
+provide. The error lands on `media_player`, the field the user changed —
+the strategy is not on this form.
+
+`async_update_reload_and_abort` is deliberately not used. The entry has an
+update listener, which is what makes an options change take effect and
+which reloads the entry whenever its data changes; the helper schedules a
+*second* reload on top of that, and core reports the combination through
+`report_usage` ("has an update listener and should use it for scheduling a
+reload", `homeassistant/config_entries.py`, breaking in 2026.12.0). One
+change, one reload, through the mechanism core is steering everyone
+towards.
 
 ### Entry versioning
 
@@ -415,6 +436,16 @@ current minor version, because core never does that itself
 `True`). 1.1 → 1.2 rewrites nothing: it records that the entry may now
 carry the quiet-hours keys, which a 0.1.x build would ignore silently and
 start speaking at 03:00.
+
+Note what makes the *minor* downgrade refusal work. Core only guards the
+major version on its own: `ConfigEntry.async_migrate`
+(`homeassistant/config_entries.py:1178-1181`) returns `False` when
+`self.version > handler.VERSION` and says nothing about the minor. Refusing
+a minor downgrade is therefore not a core convention this integration
+leans on — it works because **0.1.x's own hook already refuses it**
+(`return entry.minor_version <= AirplayNotifierConfigFlow.MINOR_VERSION`).
+The guard had to exist in the version being downgraded *to*, from the first
+release, which is why 0.1.0 shipped a hook that had nothing to migrate.
 
 ## Quiet hours
 
@@ -496,10 +527,36 @@ can therefore want the same name — two speakers can both be called
 "Bedroom". Core would give it to whichever registers first and return
 early for the second (`BaseNotificationService.async_register_services`),
 leaving that entry with no legacy service at all and making an unload of
-the first remove the service they shared.
-`_async_legacy_service_name` numbers colliding entries in config-entry
-order — creation order, restored from storage — so an entry keeps its name
-across reloads and restarts.
+the first remove the service they shared. Colliding entries are numbered
+instead: `airplay_bedroom`, `airplay_bedroom_2`.
+
+**The number is not a position in a list.** It was, and that was a bug:
+`async_entries(DOMAIN)` is the domain index, and `_EntryIndex.update_unique_id`
+(`homeassistant/config_entries.py`) re-indexes an entry by removing it and
+*appending* it — so reconfiguring the earlier of two colliding entries
+moved it behind the other and handed it that entry's name, which core then
+silently refused to register.
+
+`_async_legacy_service_name` writes the chosen name to
+`entry.data["service_name"]` the first time the entry is set up (which is
+also how an entry created by 0.1.x acquires one) and returns it unchanged
+for the life of the entry. It is recomputed only when the title stops
+deriving it — `airplay_bedroom_2` derives from `airplay_bedroom`,
+`airplay_kitchen` does not — i.e. when the user renames the entry, and then
+against the *persisted* names of the other entries of the domain, disabled
+and ignored ones included. Three consequences worth stating:
+
+- a reconfigure, a reload or a restart never renumbers anything;
+- a disabled entry keeps its name reserved, so re-enabling it finds its own
+  `alert.notifiers:` target waiting rather than in use by an entry created
+  since;
+- deleting the earlier of two colliding entries no longer promotes the
+  survivor to the unsuffixed name. Its name is its own, and it keeps it.
+
+A name that is nonetheless unavailable at setup — held by another
+integration's notify service, or by another entry of this one — is reported
+at `ERROR` and left alone. The entry still loads: its `NotifyEntity` is
+unaffected, and only the legacy surface is missing.
 
 ## Manifest classification
 

@@ -86,7 +86,7 @@
       "message": "Refused to speak on {player}: quiet hours are in effect ({start} to {end}) and no quiet hours volume is configured."
     },
     "target_unavailable": {
-      "message": "AirPlay Notifier is not ready: {entities} does not exist yet."
+      "message": "AirPlay Notifier is not ready. Entities not found in Home Assistant: {entities}."
     }
   },
   "selector": {

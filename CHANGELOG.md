@@ -41,12 +41,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The legacy notify service name still follows the entry title, but two
   entries whose titles slugify identically are now numbered
   (`airplay_bedroom`, `airplay_bedroom_2`) instead of the second silently
-  having no service at all.
+  having no service at all. The chosen name is **stored on the entry**, so
+  it survives a reconfigure, a reload, a restart, and the deletion of the
+  entry that holds the plain name; a disabled entry keeps its name
+  reserved. A name that is already in use is reported at `ERROR` and left
+  alone — the entry loads without a legacy service, and its notify entity
+  is unaffected.
 - Entry schema `MINOR_VERSION` 1 → 2 for the quiet-hours option keys.
   Nothing stored is rewritten; a downgrade to 0.1.x now refuses the entry
   rather than silently ignoring its quiet hours.
 - `data.priority` is accepted by the legacy service and validated against
-  `normal` / `critical`.
+  the Notify Switchboard contract's four values — `info`, `normal`, `high`,
+  `critical` — matched exactly and in lower case. Only `critical` acts (it
+  bypasses quiet hours); `high` deliberately does not.
+- The options form refuses a quiet hours volume of 0: a silent announcement
+  tells the automation it spoke while nobody hears it. Leave the field
+  empty to get a refusal instead.
+- The reconfigure step re-checks a stored `music_assistant` strategy
+  against the new player, and reloads the entry once instead of twice.
 
 ### Upgrade note
 
@@ -54,8 +66,11 @@ Nothing to do for a single entry. If you run **two entries whose titles are
 the same** (two speakers both called "Bedroom", say), the second one now
 gets its own `notify.airplay_<name>_2` service where before it had none;
 check which name your `alert.notifiers:` refers to in Developer tools →
-Actions. Downgrading to 0.1.x after this release leaves entries that 0.1.x
-will refuse to load.
+Actions. Whichever name each entry ends up with is then stored on it and
+will not move again unless you rename the entry. Downgrading to 0.1.x after
+this release leaves entries that 0.1.x will refuse to load — its own
+`async_migrate_entry` refuses a newer minor version, which is why that hook
+shipped in 0.1.0 with nothing to migrate.
 
 ## [0.1.0] - 2026-09-07
 

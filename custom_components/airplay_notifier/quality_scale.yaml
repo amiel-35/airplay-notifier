@@ -221,9 +221,12 @@ rules:
     status: done
     comment: >-
       async_step_reconfigure changes the media_player and the TTS entity
-      through async_update_reload_and_abort. The unique id follows the new
-      player (one entry per player still); the entry title, and therefore
-      the legacy notify service name an alert refers to, does not move.
+      through async_update_entry, letting the entry's own update listener
+      perform the single reload. The unique id follows the new player (one
+      entry per player still); the entry title, and therefore the legacy
+      notify service name an alert refers to, does not move. Both
+      suitability checks of the user step apply, including the stored
+      music_assistant strategy against the new player.
   repair-issues:
     status: todo
     comment: >-
