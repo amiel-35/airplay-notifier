@@ -80,7 +80,7 @@
       "message": "Annonce refusée au nom de {source_entity} : le domaine « {domain} » figure dans les domaines source refusés ({deny_domains})."
     },
     "quiet_hours": {
-      "message": "Annonce refusée : les heures calmes sont en vigueur ({quiet_start} à {quiet_end}) et aucun volume d'heures calmes n'est configuré."
+      "message": "Annonce refusée sur {player} : les heures calmes sont en vigueur ({start} à {end}) et aucun volume d'heures calmes n'est configuré."
     },
     "target_unavailable": {
       "message": "AirPlay Notifier n'est pas prêt : {entities} n'existe pas encore."

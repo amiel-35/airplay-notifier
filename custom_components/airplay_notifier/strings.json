@@ -80,7 +80,7 @@
       "message": "Refused to speak on behalf of {source_entity}: the domain {domain} is in the denied source domains ({deny_domains})."
     },
     "quiet_hours": {
-      "message": "Refused to speak: quiet hours are in effect ({quiet_start} to {quiet_end}) and no quiet hours volume is configured."
+      "message": "Refused to speak on {player}: quiet hours are in effect ({start} to {end}) and no quiet hours volume is configured."
     },
     "target_unavailable": {
       "message": "AirPlay Notifier is not ready: {entities} does not exist yet."

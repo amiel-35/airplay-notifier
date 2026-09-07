@@ -358,8 +358,9 @@ def _quiet_hours_volume(
             translation_domain=DOMAIN,
             translation_key="quiet_hours",
             translation_placeholders={
-                "quiet_start": str(options.quiet_start),
-                "quiet_end": str(options.quiet_end),
+                "player": options.media_player,
+                "start": str(options.quiet_start),
+                "end": str(options.quiet_end),
             },
         )
 
