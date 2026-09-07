@@ -32,6 +32,12 @@ CONF_DENY_DOMAINS: Final = "deny_domains"
 CONF_QUIET_START: Final = "quiet_start"
 CONF_QUIET_END: Final = "quiet_end"
 CONF_QUIET_VOLUME: Final = "quiet_volume"
+# The legacy `notify.<name>` service name this entry owns, persisted in
+# `entry.data` the first time the entry is set up. It is entry *data* and
+# not an option: it is part of the entry's identity — what
+# `alert.notifiers:` points at — and it must survive every reload,
+# reconfigure and restart untouched. See `__init__._async_legacy_service_name`.
+CONF_SERVICE_NAME: Final = "service_name"
 
 # Strategies.
 STRATEGY_AUTO: Final = "auto"

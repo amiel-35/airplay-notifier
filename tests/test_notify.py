@@ -11,7 +11,7 @@ import pytest
 import voluptuous as vol
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components.notify.legacy import NOTIFY_SERVICES
-from homeassistant.config_entries import ConfigEntryState
+from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
@@ -27,6 +27,7 @@ from custom_components.airplay_notifier import notify as airplay_notify
 from custom_components.airplay_notifier.const import (
     CONF_ANNOUNCE_PREFIX,
     CONF_MEDIA_PLAYER,
+    CONF_SERVICE_NAME,
     CONF_TTS_ENTITY,
     DOMAIN,
 )
@@ -612,3 +613,210 @@ async def test_the_entity_is_refused_during_quiet_hours(
 
     assert err.value.translation_key == "quiet_hours"
     assert not speak_calls
+
+
+async def test_the_service_name_is_persisted_on_the_entry_at_first_setup(
+    hass: HomeAssistant, targets: None
+) -> None:
+    """The chosen name is written to `entry.data`, not recomputed every time.
+
+    An entry created by 0.1.x carries no `service_name`; it gets one the
+    first time 0.2.0 sets it up, and that stored name is what every later
+    setup uses. Without it, the name is a function of the *current* list of
+    entries, which moves under the entry's feet.
+    """
+    entry = _make_entry()
+    entry.add_to_hass(hass)
+    assert CONF_SERVICE_NAME not in entry.data
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.data.get(CONF_SERVICE_NAME) == "airplay_living_room"
+    assert entry.runtime_data.legacy_service_name == "airplay_living_room"
+
+
+async def test_reconfiguring_the_earlier_of_two_colliding_entries_keeps_both_names(
+    hass: HomeAssistant, targets: None
+) -> None:
+    """A reconfigure must not renumber the entries behind the user's back.
+
+    `async_entries(DOMAIN)` is ordered by the domain index, and
+    `_EntryIndex.update_unique_id` (`homeassistant/config_entries.py`)
+    re-indexes an entry by removing and *appending* it. Reconfiguring the
+    earlier of two colliding entries therefore moved it to the end of the
+    list, so a name derived from that list's order made it collide with the
+    entry that already held the suffixed name — and core's
+    `BaseNotificationService.async_register_services` then returned early,
+    silently, leaving one of the two entries with no legacy service at all.
+    """
+    for object_id in ("bedroom_left", "bedroom_right", "bedroom_spare"):
+        hass.states.async_set(f"media_player.{object_id}", "idle", {})
+
+    entries = []
+    for object_id in ("bedroom_left", "bedroom_right"):
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            title="Bedroom",
+            unique_id=f"media_player.{object_id}",
+            data={
+                CONF_MEDIA_PLAYER: f"media_player.{object_id}",
+                CONF_TTS_ENTITY: TTS_ENTITY,
+            },
+        )
+        entry.add_to_hass(hass)
+        entries.append(entry)
+
+    assert await hass.config_entries.async_setup(entries[0].entry_id)
+    await hass.async_block_till_done()
+    assert entries[0].runtime_data.legacy_service_name == "airplay_bedroom"
+    assert entries[1].runtime_data.legacy_service_name == "airplay_bedroom_2"
+
+    result = await entries[0].start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_MEDIA_PLAYER: "media_player.bedroom_spare",
+            CONF_TTS_ENTITY: TTS_ENTITY,
+        },
+    )
+    await hass.async_block_till_done()
+
+    assert entries[0].runtime_data.legacy_service_name == "airplay_bedroom"
+    assert entries[1].runtime_data.legacy_service_name == "airplay_bedroom_2"
+    assert hass.services.has_service("notify", "airplay_bedroom")
+    assert hass.services.has_service("notify", "airplay_bedroom_2")
+
+
+async def test_renaming_an_entry_onto_an_existing_name_does_not_steal_it(
+    hass: HomeAssistant, targets: None
+) -> None:
+    """A rename that collides takes the next free name, it does not take over.
+
+    The renamed entry is the *earlier* of the two here, so a name derived
+    from config-entry order handed it the plain `airplay_bedroom` that the
+    other entry already had registered — which core silently refused to
+    re-register, and which this entry would then have retracted on its own
+    unload.
+    """
+    hass.states.async_set("media_player.kitchen", "idle", {})
+    hass.states.async_set("media_player.bedroom", "idle", {})
+
+    kitchen = MockConfigEntry(
+        domain=DOMAIN,
+        title="Kitchen",
+        unique_id="media_player.kitchen",
+        data={CONF_MEDIA_PLAYER: "media_player.kitchen", CONF_TTS_ENTITY: TTS_ENTITY},
+    )
+    kitchen.add_to_hass(hass)
+    bedroom = MockConfigEntry(
+        domain=DOMAIN,
+        title="Bedroom",
+        unique_id="media_player.bedroom",
+        data={CONF_MEDIA_PLAYER: "media_player.bedroom", CONF_TTS_ENTITY: TTS_ENTITY},
+    )
+    bedroom.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(kitchen.entry_id)
+    await hass.async_block_till_done()
+    assert kitchen.runtime_data.legacy_service_name == "airplay_kitchen"
+    assert bedroom.runtime_data.legacy_service_name == "airplay_bedroom"
+
+    hass.config_entries.async_update_entry(kitchen, title="Bedroom")
+    await hass.async_block_till_done()
+
+    assert bedroom.runtime_data.legacy_service_name == "airplay_bedroom"
+    assert kitchen.runtime_data.legacy_service_name == "airplay_bedroom_2"
+    assert not hass.services.has_service("notify", "airplay_kitchen")
+    assert hass.services.has_service("notify", "airplay_bedroom")
+    assert hass.services.has_service("notify", "airplay_bedroom_2")
+
+    # The name that did not move still reaches the player it always did.
+    speak_calls = async_mock_service(hass, "tts", "speak")
+    await hass.services.async_call(
+        "notify", "airplay_bedroom", {"message": "Ready"}, blocking=True
+    )
+    await hass.async_block_till_done()
+    assert speak_calls[0].data["media_player_entity_id"] == "media_player.bedroom"
+
+
+async def test_a_disabled_entry_keeps_its_service_name_reserved(
+    hass: HomeAssistant, targets: None
+) -> None:
+    """Disabling an entry frees its service, not its claim on the name.
+
+    That is the point of persisting the name: a disabled entry is going to
+    be re-enabled one day, and it must find its own `alert.notifiers:`
+    target waiting for it rather than in use by an entry created since.
+    """
+    hass.states.async_set("media_player.bedroom_left", "idle", {})
+    first = MockConfigEntry(
+        domain=DOMAIN,
+        title="Bedroom",
+        unique_id="media_player.bedroom_left",
+        data={
+            CONF_MEDIA_PLAYER: "media_player.bedroom_left",
+            CONF_TTS_ENTITY: TTS_ENTITY,
+        },
+    )
+    first.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(first.entry_id)
+    await hass.async_block_till_done()
+    assert first.data.get(CONF_SERVICE_NAME) == "airplay_bedroom"
+
+    await hass.config_entries.async_set_disabled_by(
+        first.entry_id, ConfigEntryDisabler.USER
+    )
+    await hass.async_block_till_done()
+    assert not hass.services.has_service("notify", "airplay_bedroom")
+
+    hass.states.async_set("media_player.bedroom_right", "idle", {})
+    second = MockConfigEntry(
+        domain=DOMAIN,
+        title="Bedroom",
+        unique_id="media_player.bedroom_right",
+        data={
+            CONF_MEDIA_PLAYER: "media_player.bedroom_right",
+            CONF_TTS_ENTITY: TTS_ENTITY,
+        },
+    )
+    second.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(second.entry_id)
+    await hass.async_block_till_done()
+
+    assert second.runtime_data.legacy_service_name == "airplay_bedroom_2"
+    assert hass.services.has_service("notify", "airplay_bedroom_2")
+
+
+async def test_a_name_held_elsewhere_is_neither_stolen_nor_retracted(
+    hass: HomeAssistant, targets: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A name another service already holds is reported, not taken over.
+
+    Core's `BaseNotificationService.async_register_services`
+    (`homeassistant/components/notify/legacy.py`) returns early when the
+    name exists, without a word — so the entry looked healthy while its
+    legacy service belonged to somebody else, and unloading it removed a
+    service it had never registered.
+    """
+
+    async def _foreign_service(call: object) -> None:
+        """Stand in for whatever already owns the name."""
+
+    hass.services.async_register("notify", "airplay_living_room", _foreign_service)
+
+    entry = _make_entry()
+    entry.add_to_hass(hass)
+
+    with caplog.at_level(logging.ERROR, logger="custom_components.airplay_notifier"):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert entry.state is ConfigEntryState.LOADED
+    assert "airplay_living_room" in caplog.text
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    # The service this entry never registered is still there.
+    assert hass.services.has_service("notify", "airplay_living_room")
