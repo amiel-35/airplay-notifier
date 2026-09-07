@@ -13,6 +13,9 @@
     },
     "abort": {
       "already_configured": "Este reproductor multimedia ya está configurado."
+    },
+    "error": {
+      "unsupported_player": "Este reproductor multimedia no admite la reproducción de medios, así que nunca podrá decir un aviso. Elige otro."
     }
   },
   "options": {
@@ -39,6 +42,9 @@
           "deny_domains": "Dominios de entidad separados por comas. Una llamada cuyo data.source_entity pertenezca a uno de estos dominios se rechaza y se registra, nunca se dice en voz alta."
         }
       }
+    },
+    "error": {
+      "not_a_music_assistant_player": "Este reproductor no lo proporciona Music Assistant, así que la estrategia Music Assistant no puede alcanzarlo. Usa Auto o Directo."
     }
   },
   "exceptions": {
@@ -56,6 +62,9 @@
     },
     "source_domain_denied": {
       "message": "Aviso rechazado en nombre de {source_entity}: el dominio «{domain}» está en los dominios de origen denegados ({deny_domains})."
+    },
+    "target_unavailable": {
+      "message": "AirPlay Notifier no está listo: {entities} todavía no existe."
     }
   },
   "selector": {

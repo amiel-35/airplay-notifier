@@ -1,11 +1,20 @@
 """Config flow for AirPlay Notifier.
 
 One config entry manages exactly one `media_player`. Setup asks for the
-target player and the TTS engine to speak with (fixed for the entry's
-lifetime: pointing at a different player is a new entry, not an edit).
-Everything else (language, voice, volume, restore behavior, strategy
-override, announce prefix, deny-list) is tuned afterwards through the
-options flow.
+target player and the TTS engine to speak with; both can be changed later
+through the reconfigure flow, which is also the only way to move an entry
+to a different player without losing its options. Everything else
+(language, voice, volume, restore behavior, strategy override, announce
+prefix, deny-list) is tuned through the options flow.
+
+Two suitability checks run before an entry is created or changed
+(`test-before-configure`), both deliberately permissive when the
+information they need is absent:
+
+- the target must advertise `MediaPlayerEntityFeature.PLAY_MEDIA`
+  (`_supports_play_media`);
+- the Music Assistant strategy is only offered for a player Music
+  Assistant actually provides (`_is_music_assistant_player`).
 """
 
 from __future__ import annotations
@@ -13,15 +22,16 @@ from __future__ import annotations
 from typing import Any
 
 import voluptuous as vol
+from homeassistant.components.media_player.const import MediaPlayerEntityFeature
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
     OptionsFlow,
 )
-from homeassistant.const import CONF_LANGUAGE
-from homeassistant.core import callback
-from homeassistant.helpers import selector
+from homeassistant.const import ATTR_SUPPORTED_FEATURES, CONF_LANGUAGE
+from homeassistant.core import HomeAssistant, State, callback
+from homeassistant.helpers import entity_registry as er, selector
 
 from .const import (
     CONF_ANNOUNCE_PREFIX,
@@ -38,10 +48,57 @@ from .const import (
     DEFAULT_STRATEGY,
     DEFAULT_VOLUME,
     DOMAIN,
+    MUSIC_ASSISTANT_DOMAIN,
     STRATEGY_AUTO,
     STRATEGY_DIRECT,
     STRATEGY_MUSIC_ASSISTANT,
 )
+
+
+def _supports_play_media(state: State) -> bool:
+    """Return whether a media_player state advertises `PLAY_MEDIA`.
+
+    Everything this integration does ends in `media_player.play_media`:
+    `tts.speak` calls it (`homeassistant/components/tts/entity.py`,
+    `TextToSpeechEntity.async_speak`) and Music Assistant's announcement
+    path plays a URL on the player. Home Assistant refuses the call with
+    `ServiceNotSupported` when the target does not advertise
+    `MediaPlayerEntityFeature.PLAY_MEDIA`
+    (`homeassistant/components/media_player/const.py`), so such a player
+    can never speak — worth catching in the form rather than in the log of
+    the first announcement that mattered.
+
+    Permissive when the information is missing: a player with no
+    `supported_features` attribute at all (a template entity, one that has
+    never been seen) is accepted rather than refused on the strength of an
+    absent attribute.
+    """
+    features = state.attributes.get(ATTR_SUPPORTED_FEATURES)
+    if not isinstance(features, int):
+        return True
+    return bool(features & MediaPlayerEntityFeature.PLAY_MEDIA)
+
+
+def _media_player_error(hass: HomeAssistant, media_player: str) -> str | None:
+    """Return the form error for `media_player`, or `None` if it is usable."""
+    state = hass.states.get(media_player)
+    if state is not None and not _supports_play_media(state):
+        return "unsupported_player"
+    return None
+
+
+def _is_music_assistant_player(hass: HomeAssistant, media_player: str) -> bool:
+    """Return whether `media_player` is provided by Music Assistant.
+
+    Reads `RegistryEntry.platform` (`homeassistant/helpers/entity_registry.py`),
+    the integration domain that set the entity up — the same signal the
+    `auto` strategy uses at delivery time. Permissive when the player is
+    not in the registry at all (a YAML or template `media_player` never
+    is): only a registry entry positively attributing the player to
+    another integration counts as evidence.
+    """
+    entry = er.async_get(hass).async_get(media_player)
+    return entry is None or entry.platform == MUSIC_ASSISTANT_DOMAIN
 
 
 def _deny_domains_to_string(domains: list[str]) -> str:
@@ -121,10 +178,14 @@ class AirplayNotifierConfigFlow(ConfigFlow, domain=DOMAIN):
             await self.async_set_unique_id(media_player)
             self._abort_if_unique_id_configured()
 
-            state = self.hass.states.get(media_player)
-            title = state.name if state is not None else media_player.split(".", 1)[-1]
-
-            return self.async_create_entry(title=title, data=user_input)
+            if (error := _media_player_error(self.hass, media_player)) is not None:
+                errors[CONF_MEDIA_PLAYER] = error
+            else:
+                state = self.hass.states.get(media_player)
+                title = (
+                    state.name if state is not None else media_player.split(".", 1)[-1]
+                )
+                return self.async_create_entry(title=title, data=user_input)
 
         schema = vol.Schema(
             {
@@ -159,12 +220,24 @@ class AirplayNotifierOptionsFlow(OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Manage the tunable options."""
+        current = {**self.config_entry.data, **self.config_entry.options}
+        errors: dict[str, str] = {}
+
         if user_input is not None:
             data = dict(user_input)
             data[CONF_DENY_DOMAINS] = _string_to_deny_domains(data[CONF_DENY_DOMAINS])
-            return self.async_create_entry(data=data)
 
-        current = {**self.config_entry.data, **self.config_entry.options}
+            if data.get(
+                CONF_STRATEGY
+            ) == STRATEGY_MUSIC_ASSISTANT and not _is_music_assistant_player(
+                self.hass, current[CONF_MEDIA_PLAYER]
+            ):
+                errors[CONF_STRATEGY] = "not_a_music_assistant_player"
+            else:
+                return self.async_create_entry(data=data)
+
+            current = {**current, **data}
+
         return self.async_show_form(
-            step_id="init", data_schema=_options_schema(current)
+            step_id="init", data_schema=_options_schema(current), errors=errors
         )

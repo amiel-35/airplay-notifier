@@ -13,6 +13,9 @@
     },
     "abort": {
       "already_configured": "Ce lecteur multimédia est déjà configuré."
+    },
+    "error": {
+      "unsupported_player": "Ce lecteur multimédia ne prend pas en charge la lecture de médias : il ne pourra jamais énoncer d'annonce. Choisissez-en un autre."
     }
   },
   "options": {
@@ -39,6 +42,9 @@
           "deny_domains": "Domaines d'entité séparés par des virgules. Un appel dont le data.source_entity appartient à l'un de ces domaines est refusé et journalisé, jamais énoncé."
         }
       }
+    },
+    "error": {
+      "not_a_music_assistant_player": "Ce lecteur n'est pas fourni par Music Assistant : la stratégie Music Assistant ne peut pas l'atteindre. Utilisez Auto ou Direct."
     }
   },
   "exceptions": {
@@ -56,6 +62,9 @@
     },
     "source_domain_denied": {
       "message": "Annonce refusée au nom de {source_entity} : le domaine « {domain} » figure dans les domaines source refusés ({deny_domains})."
+    },
+    "target_unavailable": {
+      "message": "AirPlay Notifier n'est pas prêt : {entities} n'existe pas encore."
     }
   },
   "selector": {

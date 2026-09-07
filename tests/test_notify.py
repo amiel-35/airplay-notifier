@@ -14,7 +14,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
-from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -46,7 +46,9 @@ def _make_entry() -> MockConfigEntry:
     )
 
 
-async def test_setup_registers_legacy_service(hass: HomeAssistant, targets: None) -> None:
+async def test_setup_registers_legacy_service(
+    hass: HomeAssistant, targets: None
+) -> None:
     """Setting up the entry registers notify.airplay_living_room."""
     entry = _make_entry()
     entry.add_to_hass(hass)
@@ -57,7 +59,9 @@ async def test_setup_registers_legacy_service(hass: HomeAssistant, targets: None
     assert hass.services.has_service("notify", "airplay_living_room")
 
 
-async def test_setup_registers_notify_entity(hass: HomeAssistant, targets: None) -> None:
+async def test_setup_registers_notify_entity(
+    hass: HomeAssistant, targets: None
+) -> None:
     """Setting up the entry also registers a NotifyEntity."""
     entry = _make_entry()
     entry.add_to_hass(hass)
@@ -96,7 +100,9 @@ async def test_legacy_service_speaks_direct(hass: HomeAssistant, targets: None) 
     assert speak_calls[0].data["message"] == "Dishwasher finished"
 
 
-async def test_notify_entity_send_message_speaks(hass: HomeAssistant, targets: None) -> None:
+async def test_notify_entity_send_message_speaks(
+    hass: HomeAssistant, targets: None
+) -> None:
     """The NotifyEntity's send_message speaks through the same delivery path."""
     hass.states.async_set(MEDIA_PLAYER, "idle", {})
 
@@ -247,7 +253,9 @@ async def test_legacy_service_is_removed_on_entry_removal(
     assert not hass.data[NOTIFY_SERVICES].get(DOMAIN)
 
 
-async def test_legacy_service_re_registers_after_reload(hass: HomeAssistant, targets: None) -> None:
+async def test_legacy_service_re_registers_after_reload(
+    hass: HomeAssistant, targets: None
+) -> None:
     """A reload leaves exactly one live service instance behind, not two."""
     entry = _make_entry()
     entry.add_to_hass(hass)
@@ -261,7 +269,9 @@ async def test_legacy_service_re_registers_after_reload(hass: HomeAssistant, tar
     assert len(hass.data[NOTIFY_SERVICES][DOMAIN]) == 1
 
 
-async def test_no_volume_restore_timer_survives_unload(hass: HomeAssistant, targets: None) -> None:
+async def test_no_volume_restore_timer_survives_unload(
+    hass: HomeAssistant, targets: None
+) -> None:
     """Unloading the entry performs the pending restore, then disarms it.
 
     The restore is scheduled, not awaited, so without an
@@ -472,9 +482,16 @@ async def test_the_entity_declares_a_translation_key_for_its_icon(
     reverse) is a silently missing icon, so both ends are pinned.
     """
     await _setup_entry(hass)
+    notify_entity = hass.states.async_entity_ids("notify")[0]
+
+    registry_entry = er.async_get(hass).async_get(notify_entity)
+    assert registry_entry is not None
+    translation_key = registry_entry.translation_key
+    assert translation_key is not None
 
     icons = json.loads((INTEGRATION_DIR / "icons.json").read_text(encoding="utf-8"))
-    translation_key = airplay_notify.AirplayNotifierEntity._attr_translation_key
-
-    assert translation_key is not None
     assert icons["entity"]["notify"][translation_key]["default"].startswith("mdi:")
+
+    # The key names the icon, never the entity: the name still comes from
+    # the device, exactly as before the key existed.
+    assert hass.states.get(notify_entity).attributes["friendly_name"] == "Living Room"
