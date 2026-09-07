@@ -18,6 +18,7 @@ from pytest_homeassistant_custom_component.common import (
 )
 
 from custom_components.airplay_notifier import (
+    LEGACY_SERVICE_OWNERS,
     _async_remove_legacy_service,
     async_migrate_entry,
 )
@@ -76,9 +77,12 @@ async def test_removing_the_legacy_service_tolerates_a_missing_registry(
     set up its legacy machinery, and the hook can run on a teardown path
     where setup never got that far.
     """
-    _async_remove_legacy_service(hass, "no-such-entry", "airplay_nothing")
+    hass.data[LEGACY_SERVICE_OWNERS] = {"airplay_nothing": "entry-1"}
+
+    _async_remove_legacy_service(hass, "entry-1", "airplay_nothing")
 
     assert not hass.services.has_service("notify", "airplay_nothing")
+    assert hass.data[LEGACY_SERVICE_OWNERS] == {}
 
 
 async def test_migrate_entry_is_a_no_op_for_the_current_version(

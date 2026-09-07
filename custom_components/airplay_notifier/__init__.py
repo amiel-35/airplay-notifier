@@ -16,6 +16,7 @@ message actually gets spoken.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from functools import partial
 
@@ -27,6 +28,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import discovery
 from homeassistant.util import slugify
+from homeassistant.util.hass_dict import HassKey
 
 from .config_flow import AirplayNotifierConfigFlow
 from .const import (
@@ -38,6 +40,7 @@ from .const import (
     CONF_QUIET_START,
     CONF_QUIET_VOLUME,
     CONF_RESTORE_VOLUME,
+    CONF_SERVICE_NAME,
     CONF_STRATEGY,
     CONF_TTS_ENTITY,
     CONF_VOICE,
@@ -50,7 +53,16 @@ from .const import (
 )
 from .delivery import AirplayNotifierOptions, VolumeRestoreState
 
+_LOGGER = logging.getLogger(__name__)
+
 PLATFORMS: list[Platform] = [Platform.NOTIFY]
+
+# Which config entry registered which `notify.<name>` service, so an entry
+# can only ever retract a name it actually holds. Claimed synchronously in
+# `async_setup_entry`, because the registration itself happens later, in a
+# discovery task: two entries setting up in the same event-loop iteration
+# would otherwise both find the name free.
+LEGACY_SERVICE_OWNERS: HassKey[dict[str, str]] = HassKey(f"{DOMAIN}_legacy_services")
 
 
 @dataclass(slots=True)
@@ -104,7 +116,17 @@ def _async_remove_legacy_service(
     service name already exists. Without this cleanup an unloaded entry would
     leave a live `notify.airplay_<name>` service pointing at a dead entry,
     and every reload would leak one more instance into `hass.data`.
+
+    Only a name this entry actually registered is retracted. Core's early
+    return is silent, so an entry whose name was already taken looks exactly
+    like one that registered successfully — and removing the service on its
+    unload would delete somebody else's.
     """
+    owners = hass.data.setdefault(LEGACY_SERVICE_OWNERS, {})
+    if owners.get(service_name) != entry_id:
+        return
+    del owners[service_name]
+
     hass.services.async_remove(NOTIFY_DOMAIN, service_name)
 
     services = hass.data.get(NOTIFY_SERVICES, {}).get(DOMAIN)
@@ -121,39 +143,83 @@ def _async_remove_legacy_service(
         hass.data[NOTIFY_SERVICES].pop(DOMAIN, None)
 
 
+def _legacy_service_base(title: str) -> str:
+    """Return the unsuffixed service name a title asks for."""
+    return f"airplay_{slugify(title)}"
+
+
+def _derives_from(service_name: str, base: str) -> bool:
+    """Return whether `service_name` is `base` or one of its `_<n>` variants.
+
+    This is how a stored name is recognised as still belonging to the
+    entry's current title: `airplay_bedroom` and `airplay_bedroom_2` both
+    derive from `airplay_bedroom`, `airplay_kitchen` does not.
+    """
+    if service_name == base:
+        return True
+    prefix = f"{base}_"
+    return service_name.startswith(prefix) and service_name[len(prefix) :].isdigit()
+
+
 @callback
 def _async_legacy_service_name(
     hass: HomeAssistant, entry: AirplayNotifierConfigEntry
 ) -> str:
-    """Return the `notify.<name>` service name for `entry`.
+    """Return — and, the first time, persist — the `notify.<name>` of `entry`.
 
     The name follows the entry *title* — the player's friendly name at
     setup time, editable by renaming the entry — and not the player's
     entity id, because that is what a user recognises in
     `alert.notifiers:`.
 
-    Two entries can therefore want the same name (two speakers really can
-    be called "Bedroom"). Core would give the name to the first and
-    silently leave the second without any legacy service at all:
+    Two entries can want the same name (two speakers really can be called
+    "Bedroom"). Core would give it to the first and silently leave the
+    second without any legacy service at all:
     `BaseNotificationService.async_register_services`
     (`homeassistant/components/notify/legacy.py`) returns early when the
     service already exists — and unloading the first entry would then
     remove the service both were sharing. Colliding entries are numbered
-    instead, in config-entry order (which is creation order, restored from
-    storage), so a given entry keeps its name across reloads and restarts.
+    instead.
 
-    The one case where a name does move is a collision resolved by
-    *deleting* the earlier entry: the survivor takes the unsuffixed name
-    on its next reload. See docs/known-issues.md.
+    The number is **not** a position in `async_entries(DOMAIN)`. That list
+    is the domain index, and `_EntryIndex.update_unique_id`
+    (`homeassistant/config_entries.py`) re-indexes an entry by removing it
+    and appending it again — so reconfiguring the earlier of two colliding
+    entries moved it behind the other and handed it that entry's name. The
+    chosen name is instead written to `entry.data[CONF_SERVICE_NAME]` the
+    first time the entry is set up (which is also how an entry created by
+    0.1.x acquires one), and every later setup returns it unchanged. It is
+    recomputed only when the entry title no longer derives it, i.e. when
+    the user renames the entry — and then against the *persisted* names of
+    the other entries of this domain, disabled and ignored ones included,
+    so a name stays reserved for an entry that is not currently loaded.
     """
-    base = f"airplay_{slugify(entry.title)}"
-    siblings = [
-        candidate.entry_id
-        for candidate in hass.config_entries.async_entries(DOMAIN)
-        if f"airplay_{slugify(candidate.title)}" == base
-    ]
-    index = siblings.index(entry.entry_id) if entry.entry_id in siblings else 0
-    return base if index == 0 else f"{base}_{index + 1}"
+    base = _legacy_service_base(entry.title)
+    stored = entry.data.get(CONF_SERVICE_NAME)
+    if isinstance(stored, str) and _derives_from(stored, base):
+        return stored
+
+    taken: set[str] = set()
+    for other in hass.config_entries.async_entries(DOMAIN):
+        if other.entry_id == entry.entry_id:
+            continue
+        other_name = other.data.get(CONF_SERVICE_NAME)
+        if isinstance(other_name, str):
+            taken.add(other_name)
+
+    service_name = base
+    index = 1
+    while service_name in taken:
+        index += 1
+        service_name = f"{base}_{index}"
+
+    # No update listener is registered yet at this point in
+    # `async_setup_entry`, so this write cannot reload the entry it is
+    # setting up; it only persists the name and schedules a save.
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_SERVICE_NAME: service_name}
+    )
+    return service_name
 
 
 @callback
@@ -221,16 +287,35 @@ async def async_setup_entry(
     # `mobile_app` discovers its own per-device notify services (see
     # `homeassistant/components/notify/legacy.py`: the discovered platform's
     # `CONF_NAME` becomes the slugified service name).
-    hass.async_create_task(
-        discovery.async_load_platform(
-            hass,
-            Platform.NOTIFY,
-            DOMAIN,
-            {CONF_NAME: legacy_service_name, "entry_id": entry.entry_id},
-            {},
-        ),
-        eager_start=True,
-    )
+    #
+    # Core would take the name if it were free and return early, without a
+    # word, if it were not. Neither is acceptable for a name an
+    # `alert.notifiers:` points at, so the claim is made here: an owned or
+    # otherwise occupied name is reported and left alone, and the entry
+    # still loads — its `NotifyEntity` works regardless.
+    owners = hass.data.setdefault(LEGACY_SERVICE_OWNERS, {})
+    if legacy_service_name in owners or hass.services.has_service(
+        NOTIFY_DOMAIN, legacy_service_name
+    ):
+        _LOGGER.error(
+            "Cannot register notify.%s for %s: that action name is already in "
+            "use. Rename this entry to give it a name of its own; its "
+            "notify entity is unaffected",
+            legacy_service_name,
+            entry.title,
+        )
+    else:
+        owners[legacy_service_name] = entry.entry_id
+        hass.async_create_task(
+            discovery.async_load_platform(
+                hass,
+                Platform.NOTIFY,
+                DOMAIN,
+                {CONF_NAME: legacy_service_name, "entry_id": entry.entry_id},
+                {},
+            ),
+            eager_start=True,
+        )
 
     # Modern `NotifyEntity`.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
