@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 import voluptuous as vol
 from homeassistant.components.notify.legacy import NOTIFY_SERVICES
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
@@ -28,6 +32,9 @@ from custom_components.airplay_notifier.const import (
 
 MEDIA_PLAYER = "media_player.living_room"
 TTS_ENTITY = "tts.piper"
+INTEGRATION_DIR = (
+    Path(__file__).resolve().parents[1] / "custom_components" / "airplay_notifier"
+)
 
 
 def _make_entry() -> MockConfigEntry:
@@ -39,7 +46,7 @@ def _make_entry() -> MockConfigEntry:
     )
 
 
-async def test_setup_registers_legacy_service(hass: HomeAssistant) -> None:
+async def test_setup_registers_legacy_service(hass: HomeAssistant, targets: None) -> None:
     """Setting up the entry registers notify.airplay_living_room."""
     entry = _make_entry()
     entry.add_to_hass(hass)
@@ -50,7 +57,7 @@ async def test_setup_registers_legacy_service(hass: HomeAssistant) -> None:
     assert hass.services.has_service("notify", "airplay_living_room")
 
 
-async def test_setup_registers_notify_entity(hass: HomeAssistant) -> None:
+async def test_setup_registers_notify_entity(hass: HomeAssistant, targets: None) -> None:
     """Setting up the entry also registers a NotifyEntity."""
     entry = _make_entry()
     entry.add_to_hass(hass)
@@ -61,7 +68,7 @@ async def test_setup_registers_notify_entity(hass: HomeAssistant) -> None:
     assert hass.states.async_entity_ids("notify")
 
 
-async def test_legacy_service_speaks_direct(hass: HomeAssistant) -> None:
+async def test_legacy_service_speaks_direct(hass: HomeAssistant, targets: None) -> None:
     """notify.airplay_living_room calls tts.speak with the right fields."""
     hass.states.async_set(MEDIA_PLAYER, "idle", {})
 
@@ -89,7 +96,7 @@ async def test_legacy_service_speaks_direct(hass: HomeAssistant) -> None:
     assert speak_calls[0].data["message"] == "Dishwasher finished"
 
 
-async def test_notify_entity_send_message_speaks(hass: HomeAssistant) -> None:
+async def test_notify_entity_send_message_speaks(hass: HomeAssistant, targets: None) -> None:
     """The NotifyEntity's send_message speaks through the same delivery path."""
     hass.states.async_set(MEDIA_PLAYER, "idle", {})
 
@@ -116,7 +123,7 @@ async def test_notify_entity_send_message_speaks(hass: HomeAssistant) -> None:
 
 
 async def test_deny_list_refuses_call(
-    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+    hass: HomeAssistant, targets: None, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A call whose source_entity is in deny_domains is refused, nothing spoken.
 
@@ -150,7 +157,7 @@ async def test_deny_list_refuses_call(
 
 
 async def test_notify_send_message_schema_has_no_data_field(
-    hass: HomeAssistant,
+    hass: HomeAssistant, targets: None
 ) -> None:
     """`notify.send_message` cannot carry `data`; only the legacy service can.
 
@@ -184,7 +191,7 @@ async def test_notify_send_message_schema_has_no_data_field(
 
 
 async def test_legacy_service_uses_live_options_after_reload(
-    hass: HomeAssistant,
+    hass: HomeAssistant, targets: None
 ) -> None:
     """Changing an option and reloading changes what the legacy service speaks.
 
@@ -222,7 +229,7 @@ async def test_legacy_service_uses_live_options_after_reload(
 
 
 async def test_legacy_service_is_removed_on_entry_removal(
-    hass: HomeAssistant,
+    hass: HomeAssistant, targets: None
 ) -> None:
     """Removing the entry unregisters notify.airplay_<name> and its instance."""
     entry = _make_entry()
@@ -240,7 +247,7 @@ async def test_legacy_service_is_removed_on_entry_removal(
     assert not hass.data[NOTIFY_SERVICES].get(DOMAIN)
 
 
-async def test_legacy_service_re_registers_after_reload(hass: HomeAssistant) -> None:
+async def test_legacy_service_re_registers_after_reload(hass: HomeAssistant, targets: None) -> None:
     """A reload leaves exactly one live service instance behind, not two."""
     entry = _make_entry()
     entry.add_to_hass(hass)
@@ -254,7 +261,7 @@ async def test_legacy_service_re_registers_after_reload(hass: HomeAssistant) -> 
     assert len(hass.data[NOTIFY_SERVICES][DOMAIN]) == 1
 
 
-async def test_no_volume_restore_timer_survives_unload(hass: HomeAssistant) -> None:
+async def test_no_volume_restore_timer_survives_unload(hass: HomeAssistant, targets: None) -> None:
     """Unloading the entry performs the pending restore, then disarms it.
 
     The restore is scheduled, not awaited, so without an
@@ -297,7 +304,7 @@ async def test_no_volume_restore_timer_survives_unload(hass: HomeAssistant) -> N
 
 
 async def test_two_entries_get_distinct_entities_and_devices(
-    hass: HomeAssistant,
+    hass: HomeAssistant, targets: None
 ) -> None:
     """Each entry owns one device and one entity named after it.
 
@@ -317,6 +324,7 @@ async def test_two_entries_get_distinct_entities_and_devices(
         },
     )
     second.add_to_hass(hass)
+    hass.states.async_set("media_player.kitchen", "idle", {})
 
     # Setting up the first entry loads the component, which sets up every
     # other entry of the domain too.
@@ -364,3 +372,109 @@ async def test_async_get_service_with_unknown_entry(hass: HomeAssistant) -> None
         hass, {}, discovery_info={"entry_id": "does-not-exist"}
     )
     assert result is None
+
+
+async def _setup_entry(hass: HomeAssistant) -> MockConfigEntry:
+    """Set up the standard entry and return it."""
+    entry = _make_entry()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return entry
+
+
+async def test_entity_follows_the_media_player_availability(
+    hass: HomeAssistant, targets: None
+) -> None:
+    """The notify entity is unavailable while its player is.
+
+    `entity-unavailable`: a notifier that cannot reach its speaker should
+    say so in the UI rather than accept calls that are certain to fail.
+    """
+    await _setup_entry(hass)
+    notify_entity = hass.states.async_entity_ids("notify")[0]
+
+    assert hass.states.get(notify_entity).state != STATE_UNAVAILABLE
+
+    hass.states.async_set(MEDIA_PLAYER, STATE_UNAVAILABLE, {})
+    await hass.async_block_till_done()
+    assert hass.states.get(notify_entity).state == STATE_UNAVAILABLE
+
+    hass.states.async_set(MEDIA_PLAYER, "idle", {})
+    await hass.async_block_till_done()
+    assert hass.states.get(notify_entity).state != STATE_UNAVAILABLE
+
+
+async def test_entity_follows_the_tts_entity_availability(
+    hass: HomeAssistant, targets: None
+) -> None:
+    """A removed TTS engine makes the notifier unavailable too.
+
+    Both targets are needed to speak, so either one going away is enough.
+    """
+    await _setup_entry(hass)
+    notify_entity = hass.states.async_entity_ids("notify")[0]
+
+    hass.states.async_remove(TTS_ENTITY)
+    await hass.async_block_till_done()
+    assert hass.states.get(notify_entity).state == STATE_UNAVAILABLE
+
+    hass.states.async_set(TTS_ENTITY, "unknown", {})
+    await hass.async_block_till_done()
+    assert hass.states.get(notify_entity).state != STATE_UNAVAILABLE
+
+
+async def test_unavailability_is_logged_once_and_recovery_once(
+    hass: HomeAssistant, targets: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`log-when-unavailable`: one line per transition, not per state change.
+
+    The core pattern is to log on the transition only. A speaker that
+    flaps, or one whose other attributes keep changing while it is
+    unavailable, must not fill the log with the same line.
+    """
+    await _setup_entry(hass)
+    caplog.clear()
+    caplog.set_level(logging.INFO)
+
+    hass.states.async_set(MEDIA_PLAYER, STATE_UNAVAILABLE, {})
+    await hass.async_block_till_done()
+    hass.states.async_set(MEDIA_PLAYER, STATE_UNAVAILABLE, {"attribution": "changed"})
+    await hass.async_block_till_done()
+    hass.states.async_remove(TTS_ENTITY)
+    await hass.async_block_till_done()
+
+    assert caplog.text.count("is unavailable") == 1
+
+    hass.states.async_set(TTS_ENTITY, "unknown", {})
+    await hass.async_block_till_done()
+    hass.states.async_set(MEDIA_PLAYER, "idle", {})
+    await hass.async_block_till_done()
+    hass.states.async_set(MEDIA_PLAYER, "playing", {})
+    await hass.async_block_till_done()
+
+    assert caplog.text.count("is available again") == 1
+
+    # And the cycle can repeat: the flag is reset, not latched.
+    hass.states.async_set(MEDIA_PLAYER, STATE_UNAVAILABLE, {})
+    await hass.async_block_till_done()
+    assert caplog.text.count("is unavailable") == 2
+
+
+async def test_the_entity_declares_a_translation_key_for_its_icon(
+    hass: HomeAssistant, targets: None
+) -> None:
+    """`icon-translations`: icons.json is keyed on the entity's translation key.
+
+    The key exists for the icon only — `_attr_name = None` short-circuits
+    `Entity._name_internal` before any name lookup, so it can never name
+    the entity. A key here with no matching `icons.json` entry (or the
+    reverse) is a silently missing icon, so both ends are pinned.
+    """
+    await _setup_entry(hass)
+
+    icons = json.loads((INTEGRATION_DIR / "icons.json").read_text(encoding="utf-8"))
+    translation_key = airplay_notify.AirplayNotifierEntity._attr_translation_key
+
+    assert translation_key is not None
+    assert icons["entity"]["notify"][translation_key]["default"].startswith("mdi:")

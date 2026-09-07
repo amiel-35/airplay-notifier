@@ -22,7 +22,9 @@ MEDIA_PLAYER = "media_player.living_room"
 TTS_ENTITY = "tts.piper"
 
 
-async def test_diagnostics_reports_resolved_options(hass: HomeAssistant) -> None:
+async def test_diagnostics_reports_resolved_options(
+    hass: HomeAssistant, targets: None
+) -> None:
     """Diagnostics expose the entry data/options and the resolved settings."""
     async_mock_service(hass, "tts", "speak")
     entry = MockConfigEntry(
