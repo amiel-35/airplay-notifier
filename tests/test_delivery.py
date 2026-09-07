@@ -1046,3 +1046,91 @@ async def test_quiet_hours_reach_the_music_assistant_strategy_too(
         )
 
     assert announce_calls[0].data["announce_volume"] == 20
+
+
+@pytest.mark.parametrize("priority", ["info", "normal", "high", "critical"])
+async def test_the_four_switchboard_priorities_are_accepted(
+    hass: HomeAssistant, priority: str
+) -> None:
+    """`info | normal | high | critical`, the Switchboard contract's set.
+
+    A closed set of two (`normal`, `critical`) refused two thirds of what
+    the contract says a caller may send, so an automation written against
+    it failed with `invalid_call_data` on a value that is perfectly valid.
+    """
+    hass.states.async_set(DIRECT_PLAYER, "idle", {})
+    speak_calls = async_mock_service(hass, "tts", "speak")
+
+    await async_deliver_message(hass, _options(), "Hello", {"priority": priority})
+
+    assert len(speak_calls) == 1
+
+
+@pytest.mark.parametrize("priority", ["info", "normal", "high"])
+async def test_only_critical_bypasses_quiet_hours(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, priority: str
+) -> None:
+    """Accepting a value is not acting on it: only `critical` is a bypass.
+
+    `high` is emphatically not `critical`: the contract keeps the two
+    apart precisely so that "important" does not become "wake the house".
+    """
+    speak_calls, _ = await _quiet_hass(hass, freezer, "23:30")
+
+    with pytest.raises(ServiceValidationError):
+        await async_deliver_message(
+            hass,
+            _options(quiet_start=QUIET_START, quiet_end=QUIET_END),
+            "Dishwasher finished",
+            {"priority": priority},
+        )
+
+    assert not speak_calls
+
+
+@pytest.mark.parametrize("priority", ["Critical", "CRITICAL", " critical", "urgent"])
+async def test_a_priority_is_matched_exactly_and_in_lower_case(
+    hass: HomeAssistant, priority: str
+) -> None:
+    """No case folding, no trimming: a near-miss fails the call.
+
+    The value decides whether a 3am alarm is spoken. Accepting `Critical`
+    as `critical` would mean accepting whatever else looks close enough,
+    and the first surprise would be an announcement at 3am — or a missing
+    one.
+    """
+    hass.states.async_set(DIRECT_PLAYER, "idle", {})
+    async_mock_service(hass, "tts", "speak")
+
+    with pytest.raises(ServiceValidationError) as err:
+        await async_deliver_message(
+            hass, _options(), "Water leak", {"priority": priority}
+        )
+
+    assert err.value.translation_key == "invalid_call_data"
+
+
+async def test_the_quiet_hours_refusal_names_the_player_and_the_window(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """`player`, `start`, `end` — the placeholders the other adapters use.
+
+    The three voice adapters share one message shape, so an automation
+    author reading a refusal sees the same sentence whichever speaker
+    refused.
+    """
+    await _quiet_hass(hass, freezer, "23:30")
+
+    with pytest.raises(ServiceValidationError) as err:
+        await async_deliver_message(
+            hass,
+            _options(quiet_start=QUIET_START, quiet_end=QUIET_END),
+            "Dishwasher finished",
+        )
+
+    assert err.value.translation_key == "quiet_hours"
+    assert err.value.translation_placeholders == {
+        "player": DIRECT_PLAYER,
+        "start": QUIET_START,
+        "end": QUIET_END,
+    }
