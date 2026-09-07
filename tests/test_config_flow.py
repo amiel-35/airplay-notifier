@@ -14,6 +14,9 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.airplay_notifier.const import (
     CONF_DENY_DOMAINS,
     CONF_MEDIA_PLAYER,
+    CONF_QUIET_END,
+    CONF_QUIET_START,
+    CONF_QUIET_VOLUME,
     CONF_RESTORE_VOLUME,
     CONF_STRATEGY,
     CONF_TTS_ENTITY,
@@ -438,3 +441,69 @@ async def test_reconfigure_reloads_a_loaded_entry_keeping_its_service_name(
     assert entry.state is ConfigEntryState.LOADED
     assert entry.runtime_data.options.media_player == OTHER_PLAYER
     assert hass.services.has_service("notify", "airplay_living_room")
+
+
+BASE_OPTIONS = {
+    CONF_VOLUME: 0.4,
+    CONF_RESTORE_VOLUME: True,
+    CONF_STRATEGY: "auto",
+    "announce_prefix": "",
+    CONF_DENY_DOMAINS: "lock",
+}
+
+
+async def test_options_flow_saves_a_quiet_window(hass: HomeAssistant) -> None:
+    """Both bounds and the quiet volume round-trip into the entry options."""
+    entry, options_result = await _entry_with_options_flow(hass)
+
+    result = await hass.config_entries.options.async_configure(
+        options_result["flow_id"],
+        {
+            **BASE_OPTIONS,
+            CONF_QUIET_START: "22:00:00",
+            CONF_QUIET_END: "07:00:00",
+            CONF_QUIET_VOLUME: 0.15,
+        },
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_QUIET_START] == "22:00:00"
+    assert entry.options[CONF_QUIET_END] == "07:00:00"
+    assert entry.options[CONF_QUIET_VOLUME] == 0.15
+
+
+async def test_options_flow_refuses_half_a_quiet_window(hass: HomeAssistant) -> None:
+    """One bound alone is a mistake, not a half-open window.
+
+    Leaving both empty is how quiet hours are turned off; filling in only
+    one is ambiguous, and silently ignoring it would leave the user
+    believing their nights were protected.
+    """
+    entry, options_result = await _entry_with_options_flow(hass)
+
+    result = await hass.config_entries.options.async_configure(
+        options_result["flow_id"], {**BASE_OPTIONS, CONF_QUIET_START: "22:00:00"}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_QUIET_START: "quiet_hours_incomplete"}
+    assert entry.options == {}
+
+
+async def test_options_flow_clears_a_quiet_window(hass: HomeAssistant) -> None:
+    """Emptying both time fields switches quiet hours back off."""
+    entry, options_result = await _entry_with_options_flow(hass)
+    await hass.config_entries.options.async_configure(
+        options_result["flow_id"],
+        {**BASE_OPTIONS, CONF_QUIET_START: "22:00:00", CONF_QUIET_END: "07:00:00"},
+    )
+    await hass.async_block_till_done()
+    assert entry.options[CONF_QUIET_START] == "22:00:00"
+
+    second = await hass.config_entries.options.async_init(entry.entry_id)
+    await hass.config_entries.options.async_configure(second["flow_id"], BASE_OPTIONS)
+    await hass.async_block_till_done()
+
+    assert CONF_QUIET_START not in entry.options
+    assert CONF_QUIET_END not in entry.options
