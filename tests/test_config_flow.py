@@ -8,6 +8,7 @@ from homeassistant.const import ATTR_SUPPORTED_FEATURES, CONF_LANGUAGE
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import entity_registry as er
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.airplay_notifier.const import (
     CONF_DENY_DOMAINS,
@@ -281,3 +282,128 @@ async def test_options_flow_allows_the_ma_strategy_for_an_unregistered_player(
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options[CONF_STRATEGY] == "music_assistant"
+
+
+OTHER_PLAYER = "media_player.kitchen"
+OTHER_TTS = "tts.cloud_say"
+
+
+def _loaded_entry(hass: HomeAssistant) -> MockConfigEntry:
+    """Add (but do not set up) an entry pointing at the standard targets."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Living Room",
+        unique_id=MEDIA_PLAYER,
+        data={CONF_MEDIA_PLAYER: MEDIA_PLAYER, CONF_TTS_ENTITY: TTS_ENTITY},
+        options={CONF_VOLUME: 0.4},
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+async def test_reconfigure_moves_the_entry_to_another_player(
+    hass: HomeAssistant, targets: None
+) -> None:
+    """Both setup-time fields can be changed without losing the options.
+
+    `reconfiguration-flow`: before this, pointing an entry at a different
+    speaker meant deleting it and re-adding it, which threw away every
+    tuned option and, worse, silently renamed the legacy notify service
+    that `alert.notifiers:` refers to.
+    """
+    hass.states.async_set(OTHER_PLAYER, "idle", {"friendly_name": "Kitchen"})
+    hass.states.async_set(OTHER_TTS, "unknown", {})
+    entry = _loaded_entry(hass)
+
+    result = await entry.start_reconfigure_flow(hass)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reconfigure"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_MEDIA_PLAYER: OTHER_PLAYER, CONF_TTS_ENTITY: OTHER_TTS},
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_MEDIA_PLAYER] == OTHER_PLAYER
+    assert entry.data[CONF_TTS_ENTITY] == OTHER_TTS
+    # The unique id follows the player: still one entry per player.
+    assert entry.unique_id == OTHER_PLAYER
+    # The options survive, and so does the title — renaming the entry here
+    # would rename `notify.airplay_living_room` under every `alert` that
+    # refers to it.
+    assert entry.options[CONF_VOLUME] == 0.4
+    assert entry.title == "Living Room"
+
+
+async def test_reconfigure_can_change_only_the_tts_engine(
+    hass: HomeAssistant, targets: None
+) -> None:
+    """Keeping the same player is not a duplicate of itself.
+
+    The unique id check has to skip the entry being reconfigured, or
+    swapping the TTS engine alone would abort as `already_configured`.
+    """
+    hass.states.async_set(OTHER_TTS, "unknown", {})
+    entry = _loaded_entry(hass)
+
+    result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_MEDIA_PLAYER: MEDIA_PLAYER, CONF_TTS_ENTITY: OTHER_TTS},
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_TTS_ENTITY] == OTHER_TTS
+    assert entry.unique_id == MEDIA_PLAYER
+
+
+async def test_reconfigure_refuses_a_player_owned_by_another_entry(
+    hass: HomeAssistant, targets: None
+) -> None:
+    """One entry per player still holds when the player is moved."""
+    hass.states.async_set(OTHER_PLAYER, "idle", {})
+    entry = _loaded_entry(hass)
+    other = MockConfigEntry(
+        domain=DOMAIN,
+        title="Kitchen",
+        unique_id=OTHER_PLAYER,
+        data={CONF_MEDIA_PLAYER: OTHER_PLAYER, CONF_TTS_ENTITY: TTS_ENTITY},
+    )
+    other.add_to_hass(hass)
+
+    result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_MEDIA_PLAYER: OTHER_PLAYER, CONF_TTS_ENTITY: TTS_ENTITY},
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_MEDIA_PLAYER: "already_configured"}
+    assert entry.data[CONF_MEDIA_PLAYER] == MEDIA_PLAYER
+
+
+async def test_reconfigure_refuses_a_player_that_cannot_play_media(
+    hass: HomeAssistant, targets: None
+) -> None:
+    """The suitability check of the user step applies to reconfigure too."""
+    hass.states.async_set(
+        OTHER_PLAYER,
+        "idle",
+        {ATTR_SUPPORTED_FEATURES: MediaPlayerEntityFeature.VOLUME_SET},
+    )
+    entry = _loaded_entry(hass)
+
+    result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_MEDIA_PLAYER: OTHER_PLAYER, CONF_TTS_ENTITY: TTS_ENTITY},
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_MEDIA_PLAYER: "unsupported_player"}
+    assert entry.data[CONF_MEDIA_PLAYER] == MEDIA_PLAYER
