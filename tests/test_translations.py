@@ -168,3 +168,28 @@ def test_entity_section_is_absent_everywhere() -> None:
     """
     for path in TRANSLATION_FILES:
         assert not any(key.startswith("entity.") for key in _load(path)), path.name
+
+
+def test_every_form_error_the_flows_raise_is_translated() -> None:
+    """A form error with no string renders as its raw key in the UI.
+
+    `already_configured` and `not_a_music_assistant_player` are set as
+    *errors* by the reconfigure step, which is a `config` flow — the
+    `config.abort.already_configured` core-style key next door does not
+    cover them, and `options.error.*` is a different section again.
+    """
+    strings = _load(INTEGRATION_DIR / "strings.json")
+
+    for key in (
+        "already_configured",
+        "not_a_music_assistant_player",
+        "unsupported_player",
+    ):
+        assert f"config.error.{key}" in strings, key
+
+    for key in (
+        "not_a_music_assistant_player",
+        "quiet_hours_incomplete",
+        "quiet_volume_silent",
+    ):
+        assert f"options.error.{key}" in strings, key

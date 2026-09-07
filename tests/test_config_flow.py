@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from homeassistant import config_entries
 from homeassistant.components.media_player.const import MediaPlayerEntityFeature
 from homeassistant.config_entries import ConfigEntryState
@@ -507,3 +509,124 @@ async def test_options_flow_clears_a_quiet_window(hass: HomeAssistant) -> None:
 
     assert CONF_QUIET_START not in entry.options
     assert CONF_QUIET_END not in entry.options
+
+
+async def test_reconfigure_reloads_the_entry_exactly_once(
+    hass: HomeAssistant, targets: None
+) -> None:
+    """One reload, and no transitional notice about the update listener.
+
+    `async_update_reload_and_abort` updates the entry — which fires the
+    update listener, and the listener reloads — and then schedules a reload
+    of its own. Two reloads for one change, and core reports the
+    combination through `report_usage` ("has an update listener and should
+    use it for scheduling a reload",
+    `homeassistant/config_entries.py`), breaking in 2026.12.0.
+    """
+    hass.states.async_set(OTHER_PLAYER, "idle", {"friendly_name": "Kitchen"})
+    entry = _loaded_entry(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    result = await entry.start_reconfigure_flow(hass)
+    with patch.object(
+        hass.config_entries,
+        "async_reload",
+        wraps=hass.config_entries.async_reload,
+    ) as reload:
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_MEDIA_PLAYER: OTHER_PLAYER, CONF_TTS_ENTITY: TTS_ENTITY},
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert reload.call_count == 1
+    assert entry.state is ConfigEntryState.LOADED
+    assert entry.runtime_data.options.media_player == OTHER_PLAYER
+
+
+async def test_reconfigure_refuses_a_non_ma_player_under_the_ma_strategy(
+    hass: HomeAssistant, targets: None
+) -> None:
+    """The stored strategy is re-checked against the *new* player.
+
+    The options flow refuses `music_assistant` on a player Music Assistant
+    does not provide, but the reconfigure step moved the entry onto exactly
+    such a player without a word — leaving a combination the options form
+    would never have accepted, and a failure on every announcement.
+    """
+    registry = er.async_get(hass)
+    registry.async_get_or_create(
+        "media_player", "apple_tv", "kitchen-uid", suggested_object_id="kitchen"
+    )
+    hass.states.async_set(OTHER_PLAYER, "idle", {})
+
+    entry = _loaded_entry(hass)
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, CONF_STRATEGY: "music_assistant"}
+    )
+
+    result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_MEDIA_PLAYER: OTHER_PLAYER, CONF_TTS_ENTITY: TTS_ENTITY},
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_MEDIA_PLAYER: "not_a_music_assistant_player"}
+    assert entry.data[CONF_MEDIA_PLAYER] == MEDIA_PLAYER
+
+
+async def test_reconfigure_allows_an_ma_player_under_the_ma_strategy(
+    hass: HomeAssistant, targets: None
+) -> None:
+    """The same move is accepted when the new player really is an MA player."""
+    registry = er.async_get(hass)
+    registry.async_get_or_create(
+        "media_player", "music_assistant", "kitchen-uid", suggested_object_id="kitchen"
+    )
+    hass.states.async_set(OTHER_PLAYER, "idle", {})
+
+    entry = _loaded_entry(hass)
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, CONF_STRATEGY: "music_assistant"}
+    )
+
+    result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_MEDIA_PLAYER: OTHER_PLAYER, CONF_TTS_ENTITY: TTS_ENTITY},
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert entry.data[CONF_MEDIA_PLAYER] == OTHER_PLAYER
+
+
+async def test_options_flow_refuses_a_silent_quiet_volume(
+    hass: HomeAssistant,
+) -> None:
+    """A quiet volume of 0 is never what anyone wants.
+
+    Speaking at volume 0 is a lie: the automation is told the announcement
+    happened and nobody hears it. Leaving the field empty is how you ask
+    for a refusal instead — and on a Music Assistant player, 0 is not even
+    reachable (it is clamped to 1 %, see docs/known-issues.md).
+    """
+    entry, options_result = await _entry_with_options_flow(hass)
+
+    result = await hass.config_entries.options.async_configure(
+        options_result["flow_id"],
+        {
+            **BASE_OPTIONS,
+            CONF_QUIET_START: "22:00:00",
+            CONF_QUIET_END: "07:00:00",
+            CONF_QUIET_VOLUME: 0,
+        },
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_QUIET_VOLUME: "quiet_volume_silent"}
+    assert entry.options == {}
