@@ -35,6 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `icons.json`: the notify entity has its own icon.
 - README sections for removal and troubleshooting (a symptom-to-cause
   table, the debug logger snippet, diagnostics).
+- Diagnostics report `legacy_service_registered` next to
+  `legacy_service_name`: whether this entry actually owns the notify
+  service it wants. Core registers silently or not at all, so
+  `hass.services.has_service` says nothing about who holds the name.
+- `docs/ADR/`: the two decisions whose mechanism only makes sense once you
+  know the decision — the persisted legacy service name (0001) and the
+  closed `priority` set (0002).
 
 ### Changed
 
@@ -51,9 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Nothing stored is rewritten; a downgrade to 0.1.x now refuses the entry
   rather than silently ignoring its quiet hours.
 - `data.priority` is accepted by the legacy service and validated against
-  the Notify Switchboard contract's four values — `info`, `normal`, `high`,
-  `critical` — matched exactly and in lower case. Only `critical` acts (it
-  bypasses quiet hours); `high` deliberately does not.
+  a closed set of four values — `info`, `normal`, `high`, `critical` —
+  matched exactly and in lower case. Only `critical` acts (it bypasses
+  quiet hours); `high` deliberately does not. Recorded in
+  `docs/ADR/0002-priority-values.md`.
 - The options form refuses a quiet hours volume of 0: a silent announcement
   tells the automation it spoke while nobody hears it. Leave the field
   empty to get a refusal instead.

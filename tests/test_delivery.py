@@ -1049,14 +1049,13 @@ async def test_quiet_hours_reach_the_music_assistant_strategy_too(
 
 
 @pytest.mark.parametrize("priority", ["info", "normal", "high", "critical"])
-async def test_the_four_switchboard_priorities_are_accepted(
-    hass: HomeAssistant, priority: str
-) -> None:
-    """`info | normal | high | critical`, the Switchboard contract's set.
+async def test_the_four_accepted_priorities(hass: HomeAssistant, priority: str) -> None:
+    """`info | normal | high | critical` — the whole set, per ADR 0002.
 
-    A closed set of two (`normal`, `critical`) refused two thirds of what
-    the contract says a caller may send, so an automation written against
-    it failed with `invalid_call_data` on a value that is perfectly valid.
+    A closed set of two (`normal`, `critical`) refused two thirds of the
+    vocabulary a caller reasonably uses, so an automation failed with
+    `invalid_call_data` on a value that says something true about its own
+    message. `docs/ADR/0002-priority-values.md`.
     """
     hass.states.async_set(DIRECT_PLAYER, "idle", {})
     speak_calls = async_mock_service(hass, "tts", "speak")

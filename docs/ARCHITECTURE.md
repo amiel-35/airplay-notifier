@@ -5,6 +5,17 @@ version this integration targets, 2026.9.1 (source checked out locally at
 `_ref/home-assistant-core`, matching `pytest-homeassistant-custom-component`
 0.13.364 and `homeassistant==2026.9.1` in `requirements_dev.txt`).
 
+This document describes how the integration works. Two choices whose
+mechanism only makes sense once you know the decision behind it have their
+own records in [`ADR/`](ADR/README.md):
+
+- [ADR 0001 — the legacy notify service name is persisted on the
+  entry](ADR/0001-legacy-service-name-is-persisted.md);
+- [ADR 0002 — `data.priority` is a closed set of four
+  values](ADR/0002-priority-values.md).
+
+They are this repository's own rules.
+
 ## Why this integration exists
 
 Home Assistant has no native `notify.*` that speaks. Voice output is
@@ -307,14 +318,15 @@ exercised through the legacy service path.
 `delivery.CALL_DATA_SCHEMA` validates the whole payload before anything
 runs: `volume` as a float coerced into 0-1, `language` as a string, `voice`
 as either a voice id or a full TTS `options` mapping, `tts_entity` through
-`cv.entity_domain("tts")`, and `priority` through `vol.In` over the Notify
-Switchboard contract's four values — `info`, `normal`, `high`, `critical`,
-matched exactly and in lower case. A closed set, so a typo in the value
-that decides whether a 3am alarm is spoken fails the call instead of
-quietly behaving like `normal`; `Critical` is a typo like any other.
-Accepting all four is not acting on all four: only `critical` bypasses
-quiet hours, and `high` deliberately does not — "important" is not "wake
-the house". Unknown keys are rejected (voluptuous'
+`cv.entity_domain("tts")`, and `priority` through `vol.In` over this
+integration's four values — `info`, `normal`, `high`, `critical`, matched
+exactly and in lower case ([ADR 0002](ADR/0002-priority-values.md)). A
+closed set, so a typo in the value that decides whether a 3am alarm is
+spoken fails the call instead of quietly behaving like `normal`;
+`Critical` is a typo like any other. Accepting all four is not acting on
+all four: only `critical` bypasses quiet hours, and `high` deliberately
+does not — "important" is not "wake the house". Unknown keys are rejected
+(voluptuous'
 `PREVENT_EXTRA` default) so a typo such as `volumne:` fails the call rather
 than being ignored and playing at the wrong volume. A schema failure
 becomes a `ServiceValidationError` with the `invalid_call_data` translation
@@ -439,7 +451,7 @@ start speaking at 03:00.
 
 Note what makes the *minor* downgrade refusal work. Core only guards the
 major version on its own: `ConfigEntry.async_migrate`
-(`homeassistant/config_entries.py:1178-1181`) returns `False` when
+(`homeassistant/config_entries.py:1170-1179`) returns `False` when
 `self.version > handler.VERSION` and says nothing about the minor. Refusing
 a minor downgrade is therefore not a core convention this integration
 leans on — it works because **0.1.x's own hook already refuses it**
@@ -553,10 +565,30 @@ and ignored ones included. Three consequences worth stating:
 - deleting the earlier of two colliding entries no longer promotes the
   survivor to the unsuffixed name. Its name is its own, and it keeps it.
 
-A name that is nonetheless unavailable at setup — held by another
-integration's notify service, or by another entry of this one — is reported
-at `ERROR` and left alone. The entry still loads: its `NotifyEntity` is
-unaffected, and only the legacy surface is missing.
+The fourth consequence is the one that looks like a bug and is not: a
+**rename round-trip keeps the suffix**. "Bedroom" → "Bedroom 2" recomputes
+the name, because the stored `airplay_bedroom` does not derive from the new
+base `airplay_bedroom_2`; renaming back to "Bedroom" does *not* recompute,
+because `airplay_bedroom_2` does derive from `airplay_bedroom`. The plain
+name stays free and unclaimed. Reclaiming it would mean renaming the
+service on a rename that was meant to leave it alone — stable names beat
+promotion, every time. Pinned by
+`tests/test_notify.py::test_renaming_back_to_the_plain_title_keeps_the_suffixed_name`;
+the reasoning is in [ADR 0001](ADR/0001-legacy-service-name-is-persisted.md).
+
+A name that is nonetheless unavailable at setup is reported at `ERROR` and
+left alone. The entry still loads: its `NotifyEntity` is unaffected, and
+only the legacy surface is missing. In practice that name belongs to
+another integration's notify service, because two entries of *this* one
+cannot compute the same name: `_async_legacy_service_name` is a callback,
+so choosing a name and persisting it happen in a single event-loop
+iteration, and the next entry to be set up already sees the write. The
+"held by another entry of this integration" branch is therefore reachable
+only through `LEGACY_SERVICE_OWNERS` — the map is claimed synchronously
+while the registration itself is deferred to a discovery task, so within
+that window `hass.services.has_service` is still false and the map is the
+only thing that knows. That is what it is for, and diagnostics report what
+it says as `legacy_service_registered`.
 
 ## Manifest classification
 
@@ -578,6 +610,14 @@ appear, redacting it is one line in a set rather than a change of shape.
 attribute on unload (`homeassistant/config_entries.py`,
 `object.__delattr__(self, "runtime_data")`) and a broken entry is exactly
 when someone downloads diagnostics.
+
+Two fields, not one, describe the legacy service: `legacy_service_name` is
+the name the entry wants, and `legacy_service_registered` is what
+`LEGACY_SERVICE_OWNERS` says it got. They disagree exactly when the name
+was already taken — and `hass.services.has_service` cannot tell those apart,
+since core's `async_register_services` returns early in silence
+(`homeassistant/components/notify/legacy.py:312`). "My `alert.notifiers:`
+stopped speaking" is the report this pair settles.
 
 ## Not implemented / open questions
 

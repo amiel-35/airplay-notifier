@@ -59,15 +59,16 @@ Per-call `data` overrides (legacy `notify.airplay_<name>` service only —
 see below): `volume` (0-1), `language`, `voice` (a voice id, or a mapping
 passed to the engine as its full `options` payload), `tts_entity` (a `tts.*`
 entity id), `priority` (`info`, `normal`, `high` or `critical`, exactly and
-in lower case — the Notify Switchboard contract's set). The payload is
+in lower case — a closed set, see
+[ADR 0002](docs/ADR/0002-priority-values.md)). The payload is
 schema-validated: an out-of-range volume, a `tts_entity` from the wrong
 domain, an unknown priority or an unknown key fails the call with a clear
 error instead of being ignored.
 
 Only `critical` does anything: it bypasses quiet hours. `info`, `normal`
-and `high` are accepted so an automation written against the contract is
-never refused for a valid value, and `high` deliberately does **not** wake
-the house.
+and `high` are accepted so a caller is never refused for saying something
+true about its own message, and `high` deliberately does **not** wake the
+house.
 
 ### Quiet hours
 

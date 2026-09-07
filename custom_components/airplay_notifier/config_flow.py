@@ -235,10 +235,12 @@ class AirplayNotifierConfigFlow(ConfigFlow, domain=DOMAIN):
         """Point an existing entry at a different player or TTS engine.
 
         The two setup-time fields are the only ones here; everything else
-        stays in the options flow, and both are kept by
-        `async_update_reload_and_abort`'s `data_updates`
-        (`homeassistant/config_entries.py`), which merges into the entry's
-        data and reloads it rather than replacing the entry.
+        stays in the options flow. Both are merged into the entry's data by
+        `async_update_entry` (`homeassistant/config_entries.py`) — the entry
+        is updated in place, never replaced, so its options and its
+        persisted `service_name` survive untouched. The entry's own update
+        listener does the single reload; see the comment on the successful
+        branch below for why `async_update_reload_and_abort` is not used.
 
         Two things deliberately do *not* change:
 

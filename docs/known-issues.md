@@ -104,14 +104,30 @@ a restart, disabling another entry or **deleting** the entry that holds the
 plain name all leave it exactly as it was. A rename is the only thing that
 changes it.
 
-Two corollaries:
+Three corollaries:
 
 - a disabled entry keeps its name reserved. That is deliberate — you will
   re-enable it one day, and it should find its own `alert.notifiers:`
   target waiting rather than taken by an entry created in the meantime;
 - renaming an entry onto a name another entry already holds gets you the
   next free number, not the name itself. Nothing is ever taken away from an
-  entry that already has it.
+  entry that already has it;
+- **renaming back does not give you the plain name back.** Rename
+  "Bedroom" to "Bedroom 2" and the service becomes
+  `notify.airplay_bedroom_2` — the stored `airplay_bedroom` no longer
+  matches the new title. Rename it back to "Bedroom" and the service
+  **stays** `notify.airplay_bedroom_2`, because a `_<n>` suffix still
+  counts as deriving from `airplay_bedroom`; the plain name is left free
+  and unclaimed.
+
+That last one is deliberate, not an oversight. The alternative — reclaiming
+the plain name whenever it happens to be free — would rename a live service
+during a rename that was supposed to leave it alone, which is the exact
+failure the persisted name exists to prevent. Stable names over promotion.
+If you do want the plain name back, rename the entry to a genuinely
+different title first ("Study", say) and then back to "Bedroom": the trip
+through a title that derives nothing is what releases the suffix. The
+reasoning is in [ADR 0001](ADR/0001-legacy-service-name-is-persisted.md).
 
 If a name is unavailable for some other reason — another integration
 registered `notify.airplay_<something>` first — the entry logs an `ERROR`

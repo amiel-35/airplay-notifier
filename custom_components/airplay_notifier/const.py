@@ -66,17 +66,20 @@ ATTR_TTS_ENTITY: Final = "tts_entity"
 ATTR_SOURCE_ENTITY: Final = "source_entity"
 ATTR_PRIORITY: Final = "priority"
 
-# `priority` is the Notify Switchboard contract's four-value set, matched
-# exactly and in lower case. A closed set rather than a free string: a
-# typo in a value that decides whether a 3am alarm is spoken must fail the
-# call rather than quietly behave like `normal`.
+# `priority` is a closed set of four values, matched exactly and in lower
+# case. Closed rather than a free string: a typo in the value that decides
+# whether a 3am alarm is spoken must fail the call rather than quietly
+# behave like `normal`.
 #
 # Accepting all four is not the same as acting on all four: only
 # `critical` does anything here (it bypasses quiet hours). `info`,
-# `normal` and `high` are accepted so an automation written against the
-# contract is not refused for a value that is perfectly valid — and `high`
-# is deliberately *not* a bypass, because "important" is not "wake the
-# house".
+# `normal` and `high` are accepted so a caller is never refused for saying
+# something true about its own message — and `high` is deliberately *not*
+# a bypass, because "important" is not "wake the house".
+#
+# This repository's rule, recorded in
+# `docs/ADR/0002-priority-values.md`; aligned with Notify Switchboard's
+# vocabulary, which is not what decides it.
 PRIORITY_INFO: Final = "info"
 PRIORITY_NORMAL: Final = "normal"
 PRIORITY_HIGH: Final = "high"
