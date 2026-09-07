@@ -116,6 +116,41 @@ def _async_remove_legacy_service(
 
 
 @callback
+def _async_legacy_service_name(
+    hass: HomeAssistant, entry: AirplayNotifierConfigEntry
+) -> str:
+    """Return the `notify.<name>` service name for `entry`.
+
+    The name follows the entry *title* — the player's friendly name at
+    setup time, editable by renaming the entry — and not the player's
+    entity id, because that is what a user recognises in
+    `alert.notifiers:`.
+
+    Two entries can therefore want the same name (two speakers really can
+    be called "Bedroom"). Core would give the name to the first and
+    silently leave the second without any legacy service at all:
+    `BaseNotificationService.async_register_services`
+    (`homeassistant/components/notify/legacy.py`) returns early when the
+    service already exists — and unloading the first entry would then
+    remove the service both were sharing. Colliding entries are numbered
+    instead, in config-entry order (which is creation order, restored from
+    storage), so a given entry keeps its name across reloads and restarts.
+
+    The one case where a name does move is a collision resolved by
+    *deleting* the earlier entry: the survivor takes the unsuffixed name
+    on its next reload. See docs/known-issues.md.
+    """
+    base = f"airplay_{slugify(entry.title)}"
+    siblings = [
+        candidate.entry_id
+        for candidate in hass.config_entries.async_entries(DOMAIN)
+        if f"airplay_{slugify(candidate.title)}" == base
+    ]
+    index = siblings.index(entry.entry_id) if entry.entry_id in siblings else 0
+    return base if index == 0 else f"{base}_{index + 1}"
+
+
+@callback
 def _async_missing_targets(
     hass: HomeAssistant, options: AirplayNotifierOptions
 ) -> list[str]:
@@ -153,7 +188,7 @@ async def async_setup_entry(
             translation_placeholders={"entities": ", ".join(missing)},
         )
 
-    legacy_service_name = f"airplay_{slugify(entry.title)}"
+    legacy_service_name = _async_legacy_service_name(hass, entry)
     entry.runtime_data = AirplayNotifierRuntimeData(
         options=options,
         legacy_service_name=legacy_service_name,
