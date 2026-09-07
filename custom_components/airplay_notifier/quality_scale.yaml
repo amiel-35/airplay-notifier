@@ -25,8 +25,9 @@ rules:
   brands:
     status: todo
     comment: >-
-      No icon/logo submitted to home-assistant/brands yet; the HACS
-      validation workflow ignores the brands check for this reason.
+      The icon is bundled under brand/ and the HACS brands check is
+      enabled, but nothing has been merged into home-assistant/brands yet,
+      so Home Assistant still shows the default integration icon.
   common-modules:
     status: done
     comment: >-
@@ -39,7 +40,9 @@ rules:
       data_description in strings.json.
   config-flow-test-coverage:
     status: done
-    comment: tests/test_config_flow.py covers the user step, the abort and the options flow.
+    comment: >-
+      tests/test_config_flow.py covers the user step and its refusals, the
+      duplicate abort, the reconfigure step and the options flow.
   dependency-transparency:
     status: done
     comment: No third-party requirements at all; everything used is Home Assistant core.
@@ -52,10 +55,11 @@ rules:
     status: done
     comment: HACS custom-repository instructions in the README.
   docs-removal-instructions:
-    status: todo
+    status: done
     comment: >-
-      Removal is "delete the entry, uninstall from HACS" but it is not
-      written down anywhere yet.
+      README section covering entry deletion, HACS removal, and what is
+      left behind (nothing, beyond references to a deleted notify
+      service).
   docs-conditions:
     status: exempt
     comment: The integration provides no conditions.
@@ -78,16 +82,22 @@ rules:
       entry.runtime_data holds AirplayNotifierRuntimeData; nothing is stored
       in hass.data by this integration.
   test-before-configure:
-    status: todo
+    status: done
     comment: >-
-      The config flow does not yet check that the chosen media_player
-      actually supports play_media, nor that the TTS engine can synthesize.
+      The user step refuses a media_player whose supported_features
+      excludes PLAY_MEDIA, and the options step refuses the Music Assistant
+      strategy on a player the entity registry attributes to another
+      integration. Both are permissive when the evidence is absent (no
+      state, no registry entry). The TTS engine is not exercised: there is
+      no way to ask an engine to synthesize without actually synthesizing
+      and playing something.
   test-before-setup:
-    status: todo
+    status: done
     comment: >-
-      async_setup_entry does not verify that the target media_player and TTS
-      entity still exist; a renamed or removed target only fails at the
-      first announcement.
+      async_setup_entry raises ConfigEntryNotReady, naming every missing
+      entity, when the media_player or the TTS entity is absent from the
+      state machine. Only absence defers setup: an unavailable target
+      still loads, so the entity that reports that unavailability exists.
   unique-config-entry:
     status: done
     comment: unique_id is the target media_player entity id; a second entry aborts.
@@ -96,9 +106,9 @@ rules:
   action-exceptions:
     status: done
     comment: >-
-      Refusals raise ServiceValidationError and delivery failures raise
-      HomeAssistantError, both with translation keys from the exceptions
-      section of strings.json.
+      Refusals raise ServiceValidationError (deny-list, invalid call data,
+      quiet hours) and delivery failures raise HomeAssistantError, both
+      with translation keys from the exceptions section of strings.json.
   config-entry-unloading:
     status: done
     comment: >-
@@ -109,19 +119,25 @@ rules:
       leave the speaker stuck at announcement volume.
   docs-configuration-parameters:
     status: done
-    comment: Options table in the README, data_description for every field.
+    comment: >-
+      Options table in the README, quiet hours explained with its
+      precedence rules, and a data_description for every field.
   docs-installation-parameters:
     status: done
   entity-unavailable:
-    status: todo
+    status: done
     comment: >-
-      The notify entity is always available, even when the target
-      media_player is unavailable or the TTS engine is gone.
+      The notify entity tracks both targets with
+      async_track_state_change_event and is unavailable while either is
+      missing or unavailable.
   integration-owner:
     status: done
   log-when-unavailable:
-    status: todo
-    comment: Follows entity-unavailable; nothing tracks the target's availability yet.
+    status: done
+    comment: >-
+      One INFO line when a target goes away and one when it comes back;
+      logged on the transition only, so a flapping or noisy target does not
+      repeat the line.
   parallel-updates:
     status: exempt
     comment: >-
@@ -133,7 +149,7 @@ rules:
     comment: There is nothing to authenticate against.
   test-coverage:
     status: done
-    comment: Above 95 % statement coverage; CI gate at 85 %.
+    comment: 100 % statement coverage over the integration; CI gate at 85 %.
 
   # Gold
   devices:
@@ -164,10 +180,10 @@ rules:
   docs-supported-functions:
     status: done
   docs-troubleshooting:
-    status: todo
+    status: done
     comment: >-
-      known-issues.md describes the limitations, but there is no
-      symptom-oriented troubleshooting section.
+      Symptom-to-cause table in the README, plus the debug logger snippet
+      and a pointer to the entry's diagnostics download.
   docs-use-cases:
     status: done
   dynamic-devices:
@@ -196,18 +212,24 @@ rules:
   exception-translations:
     status: done
   icon-translations:
-    status: todo
-    comment: No icons.json yet; the entity uses the notify default icon.
-  reconfiguration-flow:
-    status: todo
+    status: done
     comment: >-
-      media_player and tts_entity are fixed for the life of an entry;
-      changing the target means deleting and re-adding it.
+      icons.json gives the notify entity its own icon, keyed on
+      _attr_translation_key. The key names the icon only: _attr_name = None
+      short-circuits Entity._name_internal before any name lookup.
+  reconfiguration-flow:
+    status: done
+    comment: >-
+      async_step_reconfigure changes the media_player and the TTS entity
+      through async_update_reload_and_abort. The unique id follows the new
+      player (one entry per player still); the entry title, and therefore
+      the legacy notify service name an alert refers to, does not move.
   repair-issues:
     status: todo
     comment: >-
-      A missing target media_player or TTS entity should raise a repair
-      issue rather than only failing at announcement time.
+      A target that is gone for good leaves the entry retrying setup and
+      the entity unavailable, both visible, but no repair issue offers the
+      fix (reconfigure the entry onto an entity that exists).
   stale-devices:
     status: exempt
     comment: The device is created from the entry, and removed with it.

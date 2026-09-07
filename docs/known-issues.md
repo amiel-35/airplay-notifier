@@ -1,22 +1,24 @@
 # Known issues and limitations
 
 Things this integration deliberately does not do, or cannot do, as of
-0.1.0. Each one is a real constraint that was verified, not a guess. See
+0.2.0. Each one is a real constraint that was verified, not a guess. See
 [`quality_scale.yaml`](../custom_components/airplay_notifier/quality_scale.yaml)
 for the wider self-assessment.
 
 ## Per-call `data` only works through the legacy service
 
-`data.volume`, `data.language`, `data.voice`, `data.tts_entity` and
-`data.source_entity` are only reachable through
+`data.volume`, `data.language`, `data.voice`, `data.tts_entity`,
+`data.source_entity` and `data.priority` are only reachable through
 `notify.airplay_<name>`. Home Assistant's modern `notify.send_message`
 action is registered with a fixed `message`/`title` schema
 (`homeassistant/components/notify/__init__.py`,
 `async_register_entity_service(SERVICE_SEND_MESSAGE, ...)`), so there is no
 way to pass a generic `data` payload to a `NotifyEntity`. Calls made
 through `notify.<player>` therefore always use the entry's configured
-defaults, and the deny-list is never exercised on that path — it has no
-`source_entity` to inspect.
+defaults: the deny-list is never exercised on that path — it has no
+`source_entity` to inspect — and a call cannot mark itself `critical` to
+get through quiet hours. Quiet hours themselves *do* apply to the entity,
+using the entry's configured quiet volume.
 
 Locked in by
 `tests/test_notify.py::test_notify_send_message_schema_has_no_data_field`,
@@ -73,21 +75,45 @@ your public hostname.
 The link is signed and short-lived, but if that matters to you, configure an
 internal URL in **Settings → System → Network**.
 
-## Availability is not tracked
+## A missing target defers the entry instead of raising a repair issue
 
-The `notify` entity is always available, and setup does not verify that the
-target `media_player` or the TTS entity still exist. A renamed or removed
-target fails at the first announcement, with an error from the underlying
-action, rather than showing up as unavailable or raising a repair issue.
+Since 0.2.0 the entry refuses to load while its `media_player` or TTS
+entity is absent from the state machine, and retries with a backoff — the
+right answer while the target's own integration is still starting. A
+target that is gone *for good* (renamed, deleted) therefore leaves the
+entry retrying forever, visible in Settings → Devices & services but not
+raised as a repair issue walking you through the fix. Use **Reconfigure**
+to point the entry at what exists now.
 
-## The target player and TTS engine cannot be changed
+An `unavailable` target — a speaker that is switched off — is a different
+case: the entry loads and the notify entity reports itself unavailable,
+which is what you want to see.
 
-`media_player` and `tts_entity` are the entry's identity (the `unique_id`
-and the source of the legacy service name), so there is no reconfigure
-flow: pointing at a different player means deleting the entry and adding a
-new one. The legacy service name follows the entry title, so renaming the
-entry renames `notify.airplay_<name>` — and anything referencing the old
-name in `alert.notifiers:` must be updated.
+## Renaming an entry renames its notify service
+
+The legacy service name follows the entry title, so renaming the entry
+renames `notify.airplay_<name>`, and anything referencing the old name in
+`alert.notifiers:` must be updated. The reconfigure flow deliberately does
+*not* rename it when you move the entry to another player, precisely so
+that a change of speaker cannot silently break an alert.
+
+Two entries whose titles slugify identically get numbered service names
+(`airplay_bedroom`, `airplay_bedroom_2`) in creation order. The one case
+where a name moves on its own is deleting the earlier of two colliding
+entries: the survivor takes the unsuffixed name at its next reload.
+
+## Quiet hours use Home Assistant's time zone, and only at call time
+
+The window is evaluated against Home Assistant's own local time when the
+announcement arrives. There is no per-entry time zone, and an announcement
+that starts one second before the window opens is not interrupted — quiet
+hours decide whether a message is spoken, not what happens to one already
+being spoken.
+
+`data.volume` chooses how loud an announcement that gets through will be;
+it does not get it through. Only `data.priority: critical` bypasses the
+window, so an automation that sets a volume cannot opt itself out of quiet
+hours by accident.
 
 ## Refusals fail the calling action
 

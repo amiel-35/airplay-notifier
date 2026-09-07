@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-07
+
+### Added
+
+- **Quiet hours**: `quiet_start` / `quiet_end` options (leave both empty to
+  disable; an end earlier than the start crosses midnight) and an optional
+  `quiet_volume`. Inside the window an announcement is spoken at
+  `quiet_volume`, or refused with a translated `ServiceValidationError`
+  logged at `INFO` when none is set. `data.priority: critical` bypasses the
+  window; `data.volume` wins over `quiet_volume` but never turns a refusal
+  into an announcement.
+- **Reconfiguration flow**: the target `media_player` and the TTS engine can
+  be changed on an existing entry, keeping its options *and* its title — so
+  `notify.airplay_<name>`, and any `alert.notifiers:` pointing at it, keeps
+  working and now speaks on the new player.
+- **Availability**: the notify entity follows its `media_player` and TTS
+  entity and reports itself `unavailable` while either is missing or
+  unavailable, logging one line per transition in each direction.
+- **Setup deferral**: an entry whose `media_player` or TTS entity is absent
+  from the state machine raises `ConfigEntryNotReady` and is retried,
+  instead of loading and failing at every announcement.
+- **Suitability checks in the forms**: a `media_player` that does not
+  support `play_media` is refused at setup and at reconfigure, and the
+  Music Assistant strategy is refused for a player another integration
+  provides. Both stay permissive when the information is absent.
+- `icons.json`: the notify entity has its own icon.
+- README sections for removal and troubleshooting (a symptom-to-cause
+  table, the debug logger snippet, diagnostics).
+
+### Changed
+
+- The legacy notify service name still follows the entry title, but two
+  entries whose titles slugify identically are now numbered
+  (`airplay_bedroom`, `airplay_bedroom_2`) instead of the second silently
+  having no service at all.
+- Entry schema `MINOR_VERSION` 1 → 2 for the quiet-hours option keys.
+  Nothing stored is rewritten; a downgrade to 0.1.x now refuses the entry
+  rather than silently ignoring its quiet hours.
+- `data.priority` is accepted by the legacy service and validated against
+  `normal` / `critical`.
+
+### Upgrade note
+
+Nothing to do for a single entry. If you run **two entries whose titles are
+the same** (two speakers both called "Bedroom", say), the second one now
+gets its own `notify.airplay_<name>_2` service where before it had none;
+check which name your `alert.notifiers:` refers to in Developer tools →
+Actions. Downgrading to 0.1.x after this release leaves entries that 0.1.x
+will refuse to load.
+
 ## [0.1.0] - 2026-09-07
 
 ### Added
@@ -53,5 +103,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rules (no placeholder inside single quotes, valid placeholder
   identifiers, no stray braces).
 
-[Unreleased]: https://github.com/amiel-35/airplay-notifier/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/amiel-35/airplay-notifier/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/amiel-35/airplay-notifier/releases/tag/v0.2.0
 [0.1.0]: https://github.com/amiel-35/airplay-notifier/releases/tag/v0.1.0

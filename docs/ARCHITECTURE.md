@@ -300,7 +300,10 @@ exercised through the legacy service path.
 `delivery.CALL_DATA_SCHEMA` validates the whole payload before anything
 runs: `volume` as a float coerced into 0-1, `language` as a string, `voice`
 as either a voice id or a full TTS `options` mapping, `tts_entity` through
-`cv.entity_domain("tts")`. Unknown keys are rejected (voluptuous'
+`cv.entity_domain("tts")`, and `priority` through `vol.In(("normal",
+"critical"))` — a closed set, so a typo in the value that decides whether
+a 3am alarm is spoken fails the call instead of quietly behaving like
+`normal`. Unknown keys are rejected (voluptuous'
 `PREVENT_EXTRA` default) so a typo such as `volumne:` fails the call rather
 than being ignored and playing at the wrong volume. A schema failure
 becomes a `ServiceValidationError` with the `invalid_call_data` translation
@@ -360,21 +363,111 @@ an error.
 
 ## Config flow / options flow split
 
-`media_player` and `tts_entity` are fixed at setup time (they are the
-entry's identity — its `unique_id` is the media player's entity_id, and the
-legacy service name is derived from the entry title, which defaults to the
-player's friendly name at creation time). Everything else — language,
-voice, volume, restore behavior, strategy override, announce prefix, and
-the deny-list — is tunable afterward from the options flow without
-recreating the entry.
+`media_player` and `tts_entity` live in the entry's **data**: they are the
+entry's identity (its `unique_id` is the media player's entity_id) and are
+changed through `async_step_reconfigure`, which reloads the entry.
+Everything else — language, voice, volume, restore behavior, strategy
+override, announce prefix, the deny-list and quiet hours — is **options**,
+tunable from the options flow.
 
-`VERSION = 1` and `MINOR_VERSION = 1` are both declared, with an
-`async_migrate_entry` in `__init__.py` that has nothing to upgrade yet and
-refuses every downgrade — a newer major version *and* a newer minor version
-of the same major both return `False`, which core turns into a
-`MIGRATION_ERROR` instead of setting the entry up. Declaring both from the
-start means a downgrade fails visibly rather than loading with unknown
-keys, and the first real schema change is a one-file edit.
+### Checking the target before committing to it
+
+Two checks run before an entry is created or changed
+(`test-before-configure`), both permissive when the evidence is absent:
+
+- `_supports_play_media` refuses a player whose `supported_features`
+  excludes `MediaPlayerEntityFeature.PLAY_MEDIA`. Everything here ends in
+  `media_player.play_media`, which core refuses with `ServiceNotSupported`
+  for such a player, so it can never speak. A player with no
+  `supported_features` attribute at all (a template entity) is accepted:
+  an absent attribute is not evidence.
+- `_is_music_assistant_player` refuses `strategy: music_assistant` when
+  the entity registry attributes the player to another integration —
+  `music_assistant.play_announcement` is a platform entity action and only
+  accepts Music Assistant's own players. A player absent from the registry
+  is accepted, for the same reason.
+
+### The reconfigure flow keeps the entry's name
+
+`async_step_reconfigure` ends in `async_update_reload_and_abort`
+(`homeassistant/config_entries.py`) with `data_updates`, so the entry keeps
+its options and reloads onto the new targets. Two things deliberately do
+not move: the entry **title**, because the legacy `notify.airplay_<name>`
+service is derived from it and renaming it silently would break every
+`alert.notifiers:` pointing at it; and the unique-id rule, one entry per
+player — which is why the duplicate check ignores the entry being
+reconfigured, or changing only the TTS engine would abort as
+`already_configured`.
+
+While an entry also has an update listener (which is what makes an options
+change take effect), `async_update_reload_and_abort` logs a transitional
+notice about scheduling the reload itself; both paths end in the same
+reload and the listener is the one that survives in 2026.12.
+
+### Entry versioning
+
+`VERSION = 1`, `MINOR_VERSION = 2`. `async_migrate_entry` refuses every
+downgrade — a newer major version *and* a newer minor version of the same
+major both return `False`, which core turns into a `MIGRATION_ERROR`
+instead of setting the entry up — and stamps an older entry with the
+current minor version, because core never does that itself
+(`ConfigEntry.async_migrate` only schedules a save once the hook returns
+`True`). 1.1 → 1.2 rewrites nothing: it records that the entry may now
+carry the quiet-hours keys, which a 0.1.x build would ignore silently and
+start speaking at 03:00.
+
+## Quiet hours
+
+`delivery._quiet_hours_volume` runs after the deny-list and decides two
+things at once: whether the announcement happens, and how loud.
+
+The window is `[quiet_start, quiet_end)` in **local time**, half-open so a
+window ending at 07:00 is over at 07:00 sharp. `start > end` crosses
+midnight, which is the ordinary case for "the night". Both bounds are
+required — the options form refuses half a window, and an entry that
+carries one anyway is treated as *off*, because silencing announcements on
+the strength of a bound whose other half is unknown is the failure this
+feature exists to prevent. A zero-length window (`start == end`) is empty,
+not permanent, for the same reason.
+
+Inside the window, in order:
+
+1. `data.priority: critical` lets the call through untouched;
+2. no `quiet_volume` configured refuses it — `QuietHoursRefusal`, a
+   `ServiceValidationError` with the `quiet_hours` translation key, logged
+   at **INFO** because this is the configuration working, not a fault;
+3. `data.volume`, if the caller set one, wins over `quiet_volume`;
+4. `quiet_volume`.
+
+`data.volume` therefore decides *how loud*, never *whether*: a call that
+sets a volume but no priority is still refused by (2), or every automation
+that happens to set a volume would opt itself out of quiet hours.
+
+`QuietHoursRefusal` is deliberately **not** an `AnnouncementDenied`: the
+legacy service logs a deny-list warning about a misconfigured automation
+when it catches that one, and a quiet-hours refusal must not borrow that
+line.
+
+## Setup deferral and availability
+
+Two different questions, answered in two places.
+
+`async_setup_entry` raises `ConfigEntryNotReady` (translation key
+`target_unavailable`) when either target is **missing from the state
+machine**, naming both when both are. Home Assistant then retries with a
+backoff, which is the right answer for the usual cause: the target's own
+integration has not finished starting. `music_assistant` and `apple_tv`
+are `after_dependencies` rather than hard ones, and a TTS engine
+(`wyoming`, a cloud provider) is not a dependency at all.
+
+Only absence defers setup. An `unavailable` target still loads the entry,
+because the entity whose job is to *report* that unavailability has to
+exist to report it: `AirplayNotifierEntity` tracks both targets with
+`async_track_state_change_event` (the pattern of
+`homeassistant/components/switch_as_x/entity.py`) and is `unavailable`
+while either is missing or unavailable. Each transition is logged once, in
+each direction — not once per state change, or an unavailable speaker
+whose attributes keep moving would fill the log with the same line.
 
 ## Entities, devices and naming
 
@@ -385,13 +478,28 @@ time), holding one `NotifyEntity`. That entity is the device's main entity,
 so it sets `_attr_has_entity_name = True` with `_attr_name = None` and
 takes the device's name: `notify.living_room`, not the `notify.speak` /
 `notify.speak_2` collision a hard-coded entity name produced across two
-entries. There is deliberately **no** `_attr_translation_key` and no
-`entity` section in `strings.json`: `Entity._name_internal`
+entries. `_attr_translation_key = "speak"` exists for `icons.json` alone
+and can never name the entity: `Entity._name_internal`
 (`homeassistant/helpers/entity.py`) opens with `if hasattr(self,
 "_attr_name"): return self._attr_name`, and declaring `_attr_name = None`
-makes that `hasattr` true, so the translation lookup on the next branch is
-never reached. A translation key there would promise a name the entity can
-never display.
+makes that `hasattr` true, so the name lookup on the next branch is never
+reached. That is why there is still no `entity` section in `strings.json`
+— it would promise a name the entity can never display — while
+`icons.json`, resolved by key alone, works.
+
+### The legacy service name, and what happens when two collide
+
+`notify.airplay_<slugify(title)>` follows the entry **title**, not the
+player's entity id: the title is what a user recognises in
+`alert.notifiers:`, and the two really do differ in the wild. Two entries
+can therefore want the same name — two speakers can both be called
+"Bedroom". Core would give it to whichever registers first and return
+early for the second (`BaseNotificationService.async_register_services`),
+leaving that entry with no legacy service at all and making an unload of
+the first remove the service they shared.
+`_async_legacy_service_name` numbers colliding entries in config-entry
+order — creation order, restored from storage — so an entry keeps its name
+across reloads and restarts.
 
 ## Manifest classification
 
@@ -431,11 +539,12 @@ when someone downloads diagnostics.
   integration's own `PLAY_MEDIA` support and its own media-source
   resolution, which this integration does not control and has not audited
   integration-by-integration.
-- **Availability and repair issues**: the notify entity is always
-  available, and neither setup nor runtime checks that the target
-  `media_player` and TTS entity still exist.
-- **Reconfiguration**: `media_player` and `tts_entity` cannot be changed on
-  an existing entry.
+- **Repair issues**: a target that disappears for good shows up as an
+  unavailable entity and, at startup, as an entry in setup-retry, but no
+  `repair` issue is raised to walk the user through fixing it.
+- **Quiet hours follow Home Assistant's own time zone** and are evaluated
+  when the announcement arrives. There is no per-entry time zone, and an
+  announcement that starts just before the window closes is not cut short.
 
 See [`known-issues.md`](known-issues.md) for the user-facing version of
 these, and

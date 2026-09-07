@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 import voluptuous as vol
+from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components.notify.legacy import NOTIFY_SERVICES
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import STATE_UNAVAILABLE
@@ -575,3 +576,39 @@ async def test_two_entries_with_the_same_title_get_distinct_services(
     )
     await hass.async_block_till_done()
     assert speak_calls[0].data["media_player_entity_id"] == "media_player.bedroom_right"
+
+
+async def test_the_entity_is_refused_during_quiet_hours(
+    hass: HomeAssistant, targets: None, freezer: FrozenDateTimeFactory
+) -> None:
+    """Quiet hours apply to the modern surface too.
+
+    The entity cannot carry `data`, so it can neither mark a call
+    `critical` nor override the volume — but the window itself is entry
+    configuration, so it is honoured, with the entry's own quiet volume
+    when one is set.
+    """
+    await hass.config.async_set_time_zone("UTC")
+    freezer.move_to("2026-01-15 23:30:00+00:00")
+
+    entry = _make_entry()
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        entry, options={"quiet_start": "22:00:00", "quiet_end": "07:00:00"}
+    )
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    speak_calls = async_mock_service(hass, "tts", "speak")
+    notify_entity = hass.states.async_entity_ids("notify")[0]
+
+    with pytest.raises(ServiceValidationError) as err:
+        await hass.services.async_call(
+            "notify",
+            "send_message",
+            {"entity_id": notify_entity, "message": "Dishwasher finished"},
+            blocking=True,
+        )
+
+    assert err.value.translation_key == "quiet_hours"
+    assert not speak_calls
