@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## Archived - 2026-09-07
+
+Development has stopped; the repository is read-only. The final release is
+0.2.0. Reason: Home Assistant's `tts` integration already provides a legacy
+`notify` platform (`notify: - platform: tts`) that turns any `media_player`
+into a `notify.<name>` target, and pointed at a Music Assistant player — the
+usual way AirPlay receivers reach Home Assistant — it pauses, announces and
+resumes natively. This integration's Music Assistant strategy was already
+that path; its Direct strategy cannot resume a stream another device was
+sending. What it added on top (config flow, errors raised to the caller, deny
+list, quiet hours, priorities, timed volume restore) does not justify
+maintaining a custom integration once policy lives in a notify router. The
+findings are in `docs/known-issues.md` ("Final findings, not fixed"). The
+code stays installable as a HACS custom repository, unsupported.
+
 ## [0.2.0] - 2026-09-07
 
 ### Added

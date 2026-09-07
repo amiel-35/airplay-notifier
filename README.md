@@ -1,5 +1,40 @@
 # AirPlay Notifier
 
+> **⚠️ Archived — 7 September 2026.** Development has stopped and this
+> repository is read-only. The final release is
+> [v0.2.0](https://github.com/amiel-35/airplay-notifier/releases/tag/v0.2.0);
+> the code stays installable as a HACS custom repository, **unsupported**.
+>
+> **Why.** Home Assistant already has a `notify` that speaks: the `tts`
+> integration ships a legacy `notify` platform
+> (`homeassistant/components/tts/notify.py`). Five lines of YAML give you a
+> `notify.<name>` target that `alert`, blueprints and automations can use:
+>
+> ```yaml
+> notify:
+>   - name: living_room
+>     platform: tts
+>     entity_id: tts.home_assistant_cloud      # any tts.* entity
+>     media_player: media_player.living_room   # any media_player
+>     language: fr-FR
+> ```
+>
+> Point it at a **Music Assistant** player — which is how most AirPlay
+> receivers reach Home Assistant anyway — and the music is paused, the
+> message spoken, the volume restored and the music **resumed**, natively.
+> This integration's "Music Assistant" strategy was already that path; its
+> "Direct" strategy (`apple_tv`) can never bring back a stream another
+> device was sending. The Cloud TTS engine picks the language's default
+> voice on its own.
+>
+> What this integration did on top — a config flow instead of YAML, an
+> error raised to the caller when the player is dead, a deny list, quiet
+> hours, priorities, a timed volume restore on the Direct path — does not
+> justify maintaining a custom integration: policy belongs to a notify
+> router. Decided after real-hardware tests of the sibling Cast Notifier on
+> 7 September 2026; findings in [`docs/known-issues.md`](docs/known-issues.md),
+> "Final findings".
+
 A Home Assistant `notify.*` that **speaks** on AirPlay players — HomePods,
 Apple TVs, AirPlay speakers — whether or not they are managed by
 [Music Assistant](https://www.music-assistant.io/).

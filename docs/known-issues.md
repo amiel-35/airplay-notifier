@@ -203,3 +203,57 @@ awaits the service call, which automations and scripts do.
 
 `translations/es.json` was not written by a Spanish speaker. Corrections are
 welcome.
+
+## Final findings, not fixed (2026-09-07, repository archived)
+
+Recorded the day the repository was archived, so that anyone still
+installing the code knows what to expect. The sibling Cast Notifier was
+tested on real hardware the same day (Home Assistant 2026.9.1, a Google
+speaker, Music Assistant 2.10, Cloud TTS); this integration's Direct
+strategy was **not** exercised on a real AirPlay receiver. Timings are
+relative to the service call.
+
+### #6 — Nothing said what happens to the music
+
+- **Direct strategy** (`tts.speak` on an `apple_tv` player): the receiver
+  was being streamed to by some sender; the clip takes it over and, when it
+  ends, Home Assistant has no handle on that sender's stream. Nothing can be
+  resumed, not even best effort. Only the volume comes back, on a timer.
+- **Music Assistant strategy**: Music Assistant owns the queue, so it pauses,
+  announces at its own announce volume (+85 % by default, per-player
+  setting: 0.36 → 0.66 measured) and resumes. Measured on a Music Assistant
+  player: pause +0.5 s, voice +3.4 s, volume restored +9.5 s, radio resumed
+  +11–12 s.
+
+### #7 — Merge into Cast Notifier, then archive both
+
+A single speaker notifier choosing its path from the entity's platform was
+planned (amiel-35/cast-notifier#8), then dropped: the core already provides
+the `notify` target (below), and the Music Assistant path is native.
+
+### The core already does the job (cast-notifier#8)
+
+`homeassistant/components/tts/notify.py` (legacy `notify: - platform: tts`,
+still shipped in 2026.9.1) gives a `notify.<name>` on any `media_player`;
+Cloud TTS uses the language's default voice (`cloud/tts.py`,
+`DEFAULT_VOICES`). Measured end to end on a Music Assistant player: the call
+returns in 0.05 s (fire-and-forget), pause +0.5 s, voice +2.1 → +8.1 s,
+volume restored +9.5 s, radio resumed +11.4 s. Its gaps — no UI, no error
+back to the caller, no per-call options, a Core restart to load it (no
+`notify.reload` service) — were judged not worth a custom integration once
+policy (deny list, quiet hours, priority) lives in a notify router.
+
+### Findings on the Cast side that also apply here
+
+From amiel-35/cast-notifier `docs/known-issues.md`, "Final findings":
+refusals over the REST API surface as HTTP 500 (core's
+`APIDomainServicesView` maps only `vol.Invalid` and `ServiceNotFound`); a
+config-flow entity filter is frontend-only, a non-matching platform can be
+picked through the API; Music Assistant's announce volume rule (+85 %)
+applies whenever the native path is taken, whatever the entry's `volume`.
+
+### #8 — Companion-only `data` keys are refused
+
+Open at archive time: a `data` payload shared with a `mobile_app` notifier
+(`tag`, `image`, `url`, `actions`, `group`, `channel`, `push`, `ttl`,
+`notification_id`) is refused instead of ignored. Not fixed.
