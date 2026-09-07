@@ -9,10 +9,24 @@
           "media_player": "Media player",
           "tts_entity": "Text-to-speech engine"
         }
+      },
+      "reconfigure": {
+        "title": "Change the player or engine",
+        "description": "Point this AirPlay Notifier entry at a different player or text-to-speech engine. Its other settings, and the name of its notify service, are kept.",
+        "data": {
+          "media_player": "Media player",
+          "tts_entity": "Text-to-speech engine"
+        }
       }
     },
     "abort": {
-      "already_configured": "This media player is already configured."
+      "already_configured": "This media player is already configured.",
+      "reconfigure_successful": "AirPlay Notifier now speaks on the player you chose."
+    },
+    "error": {
+      "already_configured": "Another AirPlay Notifier entry already speaks on this media player. One entry manages one player.",
+      "not_a_music_assistant_player": "This player is not provided by Music Assistant, and this entry is set to the Music Assistant strategy. Choose a Music Assistant player, or change the strategy in the entry's settings first.",
+      "unsupported_player": "This media player does not support playing media, so it can never speak an announcement. Choose another one."
     }
   },
   "options": {
@@ -27,7 +41,10 @@
           "restore_volume": "Restore volume after speaking",
           "strategy": "Delivery strategy",
           "announce_prefix": "Announcement prefix",
-          "deny_domains": "Denied source domains"
+          "deny_domains": "Denied source domains",
+          "quiet_start": "Quiet hours start",
+          "quiet_end": "Quiet hours end",
+          "quiet_volume": "Quiet hours volume"
         },
         "data_description": {
           "language": "Leave empty to use the TTS engine's default language.",
@@ -36,9 +53,17 @@
           "restore_volume": "Restore the player's previous volume once the announcement has finished. Not applicable to the Music Assistant strategy, which manages announcement volume itself.",
           "strategy": "Auto detects Music Assistant players automatically; Music Assistant and Direct force one delivery path.",
           "announce_prefix": "Text spoken before every message, e.g. a chime word or \"Attention\".",
-          "deny_domains": "Comma-separated entity domains. A call whose data.source_entity belongs to one of these is refused and logged, never spoken."
+          "deny_domains": "Comma-separated entity domains. A call whose data.source_entity belongs to one of these is refused and logged, never spoken.",
+          "quiet_start": "Beginning of the window during which announcements are quietened or refused. Leave both times empty to disable quiet hours.",
+          "quiet_end": "End of the window, excluded. Set it earlier than the start for a window that crosses midnight, such as 22:00 to 07:00.",
+          "quiet_volume": "Volume to speak at during quiet hours. Leave empty to refuse announcements instead of speaking them quietly. A call with priority critical is spoken either way."
         }
       }
+    },
+    "error": {
+      "not_a_music_assistant_player": "This player is not provided by Music Assistant, so the Music Assistant strategy cannot reach it. Use Auto or Direct.",
+      "quiet_hours_incomplete": "Set both the start and the end of the quiet hours window, or leave both empty to disable it.",
+      "quiet_volume_silent": "A quiet hours volume of 0 would speak silently. Leave it empty to refuse announcements during quiet hours instead."
     }
   },
   "exceptions": {
@@ -56,6 +81,12 @@
     },
     "source_domain_denied": {
       "message": "Refused to speak on behalf of {source_entity}: the domain {domain} is in the denied source domains ({deny_domains})."
+    },
+    "quiet_hours": {
+      "message": "Refused to speak on {player}: quiet hours are in effect ({start} to {end}) and no quiet hours volume is configured."
+    },
+    "target_unavailable": {
+      "message": "AirPlay Notifier is not ready. Entities not found in Home Assistant: {entities}."
     }
   },
   "selector": {

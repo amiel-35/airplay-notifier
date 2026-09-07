@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
+from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components.media_source import PlayMedia
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
@@ -760,3 +762,374 @@ async def test_music_assistant_volume_zero_is_clamped_and_warned(
 
     assert announce_calls[0].data["announce_volume"] == 1
     assert "outside the range Music Assistant" in caplog.text
+
+
+QUIET_START = "22:00:00"
+QUIET_END = "07:00:00"
+
+
+async def _quiet_hass(hass: HomeAssistant, freezer: FrozenDateTimeFactory, at: str):
+    """Freeze local time at `at` (HH:MM) with the player ready to speak."""
+    await hass.config.async_set_time_zone("UTC")
+    freezer.move_to(f"2026-01-15 {at}:00+00:00")
+    hass.states.async_set(DIRECT_PLAYER, "idle", {"volume_level": 0.8})
+    return async_mock_service(hass, "tts", "speak"), async_mock_service(
+        hass, "media_player", "volume_set"
+    )
+
+
+async def test_quiet_hours_refuse_when_no_quiet_volume_is_set(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Inside the window with nothing to fall back to, the call is refused.
+
+    A refusal, not a silent drop: the automation that tried to speak at
+    03:00 should fail visibly. It is logged at INFO rather than WARNING
+    because a quiet-hours refusal is the configuration working, not
+    something going wrong.
+    """
+    speak_calls, _ = await _quiet_hass(hass, freezer, "23:30")
+    caplog.set_level(logging.INFO)
+
+    with pytest.raises(ServiceValidationError) as err:
+        await async_deliver_message(
+            hass,
+            _options(quiet_start=QUIET_START, quiet_end=QUIET_END, volume=0.6),
+            "Dishwasher finished",
+        )
+
+    assert err.value.translation_key == "quiet_hours"
+    assert not speak_calls
+    assert "quiet hours" in caplog.text.lower()
+
+
+async def test_quiet_hours_speak_at_the_quiet_volume(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """With a quiet volume configured, the announcement is spoken quietly."""
+    speak_calls, volume_calls = await _quiet_hass(hass, freezer, "23:30")
+
+    await async_deliver_message(
+        hass,
+        _options(
+            quiet_start=QUIET_START,
+            quiet_end=QUIET_END,
+            quiet_volume=0.15,
+            volume=0.6,
+            restore_volume=False,
+        ),
+        "Dishwasher finished",
+    )
+
+    assert len(speak_calls) == 1
+    assert [call.data["volume_level"] for call in volume_calls] == [0.15]
+
+
+async def test_quiet_volume_applies_even_without_a_configured_volume(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """The quiet volume is a volume in its own right, not a modifier."""
+    _, volume_calls = await _quiet_hass(hass, freezer, "23:30")
+
+    await async_deliver_message(
+        hass,
+        _options(
+            quiet_start=QUIET_START,
+            quiet_end=QUIET_END,
+            quiet_volume=0.1,
+            restore_volume=False,
+        ),
+        "Dishwasher finished",
+    )
+
+    assert [call.data["volume_level"] for call in volume_calls] == [0.1]
+
+
+async def test_a_per_call_volume_wins_over_the_quiet_volume(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """`data.volume` is an explicit choice for this one call; it is honoured."""
+    _, volume_calls = await _quiet_hass(hass, freezer, "23:30")
+
+    await async_deliver_message(
+        hass,
+        _options(
+            quiet_start=QUIET_START,
+            quiet_end=QUIET_END,
+            quiet_volume=0.1,
+            restore_volume=False,
+        ),
+        "Dishwasher finished",
+        {"volume": 0.5},
+    )
+
+    assert [call.data["volume_level"] for call in volume_calls] == [0.5]
+
+
+async def test_a_per_call_volume_does_not_bypass_the_refusal(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """Choosing a volume is not the same as claiming the call is urgent.
+
+    `data.volume` decides *how loud* an announcement that is allowed
+    through will be. Whether it is allowed through at all is decided by
+    `quiet_volume` and `data.priority` — otherwise every automation that
+    happens to set a volume would silently opt out of quiet hours.
+    """
+    speak_calls, _ = await _quiet_hass(hass, freezer, "23:30")
+
+    with pytest.raises(ServiceValidationError):
+        await async_deliver_message(
+            hass,
+            _options(quiet_start=QUIET_START, quiet_end=QUIET_END),
+            "Dishwasher finished",
+            {"volume": 0.5},
+        )
+
+    assert not speak_calls
+
+
+async def test_critical_priority_bypasses_quiet_hours(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """A critical call speaks at the configured volume, window or no window."""
+    speak_calls, volume_calls = await _quiet_hass(hass, freezer, "23:30")
+
+    await async_deliver_message(
+        hass,
+        _options(
+            quiet_start=QUIET_START,
+            quiet_end=QUIET_END,
+            volume=0.9,
+            restore_volume=False,
+        ),
+        "Water leak detected",
+        {"priority": "critical"},
+    )
+
+    assert len(speak_calls) == 1
+    assert [call.data["volume_level"] for call in volume_calls] == [0.9]
+
+
+async def test_normal_priority_does_not_bypass_quiet_hours(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """Only `critical` bypasses; spelling it out explicitly changes nothing."""
+    speak_calls, _ = await _quiet_hass(hass, freezer, "23:30")
+
+    with pytest.raises(ServiceValidationError):
+        await async_deliver_message(
+            hass,
+            _options(quiet_start=QUIET_START, quiet_end=QUIET_END),
+            "Dishwasher finished",
+            {"priority": "normal"},
+        )
+
+    assert not speak_calls
+
+
+async def test_an_unknown_priority_is_refused_by_the_schema(
+    hass: HomeAssistant,
+) -> None:
+    """A typo must fail loudly, not quietly stop bypassing quiet hours."""
+    hass.states.async_set(DIRECT_PLAYER, "idle", {})
+    async_mock_service(hass, "tts", "speak")
+
+    with pytest.raises(ServiceValidationError) as err:
+        await async_deliver_message(
+            hass, _options(), "Water leak", {"priority": "criticl"}
+        )
+
+    assert err.value.translation_key == "invalid_call_data"
+
+
+@pytest.mark.parametrize(
+    ("now", "quiet"),
+    [
+        ("21:59", False),
+        ("22:00", True),
+        ("23:59", True),
+        ("02:00", True),
+        ("06:59", True),
+        ("07:00", False),
+        ("12:00", False),
+    ],
+)
+async def test_a_window_crossing_midnight(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, now: str, quiet: bool
+) -> None:
+    """22:00 → 07:00 means "the night", not "an empty range".
+
+    The window is half-open: it includes its start and excludes its end,
+    so 07:00 sharp is already the morning.
+    """
+    speak_calls, _ = await _quiet_hass(hass, freezer, now)
+    options = _options(quiet_start=QUIET_START, quiet_end=QUIET_END)
+
+    if quiet:
+        with pytest.raises(ServiceValidationError):
+            await async_deliver_message(hass, options, "Dishwasher finished")
+        assert not speak_calls
+    else:
+        await async_deliver_message(hass, options, "Dishwasher finished")
+        assert len(speak_calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("now", "quiet"),
+    [("12:59", False), ("13:00", True), ("13:59", True), ("14:00", False)],
+)
+async def test_a_window_inside_one_day(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, now: str, quiet: bool
+) -> None:
+    """A daytime window (a baby's nap) is the ordinary, non-wrapping case."""
+    speak_calls, _ = await _quiet_hass(hass, freezer, now)
+    options = _options(quiet_start="13:00:00", quiet_end="14:00:00")
+
+    if quiet:
+        with pytest.raises(ServiceValidationError):
+            await async_deliver_message(hass, options, "Dishwasher finished")
+    else:
+        await async_deliver_message(hass, options, "Dishwasher finished")
+        assert len(speak_calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [(None, None), (QUIET_START, None), (None, QUIET_END), ("22:00:00", "22:00:00")],
+)
+async def test_quiet_hours_are_off_unless_a_real_window_is_configured(
+    hass: HomeAssistant,
+    freezer: FrozenDateTimeFactory,
+    start: str | None,
+    end: str | None,
+) -> None:
+    """No window, half a window, or a zero-length one: nothing is refused.
+
+    A half-filled window is refused by the options form; an entry that
+    somehow carries one anyway must not start silencing announcements on
+    the strength of a bound whose other half is unknown.
+    """
+    speak_calls, _ = await _quiet_hass(hass, freezer, "23:30")
+
+    await async_deliver_message(
+        hass, _options(quiet_start=start, quiet_end=end), "Dishwasher finished"
+    )
+
+    assert len(speak_calls) == 1
+
+
+async def test_quiet_hours_reach_the_music_assistant_strategy_too(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """The quiet volume becomes Music Assistant's `announce_volume`."""
+    await _quiet_hass(hass, freezer, "23:30")
+    ma_player = _register_ma_player(hass, "quiet-ma-speaker", "quiet_ma_speaker")
+    announce_calls = async_mock_service(hass, "music_assistant", "play_announcement")
+
+    with patch(
+        "custom_components.airplay_notifier.delivery._async_resolve_tts_url",
+        return_value="https://example.local/tts.mp3",
+    ):
+        await async_deliver_message(
+            hass,
+            _options(
+                media_player=ma_player,
+                quiet_start=QUIET_START,
+                quiet_end=QUIET_END,
+                quiet_volume=0.2,
+                volume=0.8,
+            ),
+            "Dishwasher finished",
+        )
+
+    assert announce_calls[0].data["announce_volume"] == 20
+
+
+@pytest.mark.parametrize("priority", ["info", "normal", "high", "critical"])
+async def test_the_four_accepted_priorities(hass: HomeAssistant, priority: str) -> None:
+    """`info | normal | high | critical` — the whole set, per ADR 0002.
+
+    A closed set of two (`normal`, `critical`) refused two thirds of the
+    vocabulary a caller reasonably uses, so an automation failed with
+    `invalid_call_data` on a value that says something true about its own
+    message. `docs/ADR/0002-priority-values.md`.
+    """
+    hass.states.async_set(DIRECT_PLAYER, "idle", {})
+    speak_calls = async_mock_service(hass, "tts", "speak")
+
+    await async_deliver_message(hass, _options(), "Hello", {"priority": priority})
+
+    assert len(speak_calls) == 1
+
+
+@pytest.mark.parametrize("priority", ["info", "normal", "high"])
+async def test_only_critical_bypasses_quiet_hours(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory, priority: str
+) -> None:
+    """Accepting a value is not acting on it: only `critical` is a bypass.
+
+    `high` is emphatically not `critical`: the contract keeps the two
+    apart precisely so that "important" does not become "wake the house".
+    """
+    speak_calls, _ = await _quiet_hass(hass, freezer, "23:30")
+
+    with pytest.raises(ServiceValidationError):
+        await async_deliver_message(
+            hass,
+            _options(quiet_start=QUIET_START, quiet_end=QUIET_END),
+            "Dishwasher finished",
+            {"priority": priority},
+        )
+
+    assert not speak_calls
+
+
+@pytest.mark.parametrize("priority", ["Critical", "CRITICAL", " critical", "urgent"])
+async def test_a_priority_is_matched_exactly_and_in_lower_case(
+    hass: HomeAssistant, priority: str
+) -> None:
+    """No case folding, no trimming: a near-miss fails the call.
+
+    The value decides whether a 3am alarm is spoken. Accepting `Critical`
+    as `critical` would mean accepting whatever else looks close enough,
+    and the first surprise would be an announcement at 3am — or a missing
+    one.
+    """
+    hass.states.async_set(DIRECT_PLAYER, "idle", {})
+    async_mock_service(hass, "tts", "speak")
+
+    with pytest.raises(ServiceValidationError) as err:
+        await async_deliver_message(
+            hass, _options(), "Water leak", {"priority": priority}
+        )
+
+    assert err.value.translation_key == "invalid_call_data"
+
+
+async def test_the_quiet_hours_refusal_names_the_player_and_the_window(
+    hass: HomeAssistant, freezer: FrozenDateTimeFactory
+) -> None:
+    """`player`, `start`, `end` — the placeholders the other adapters use.
+
+    The three voice adapters share one message shape, so an automation
+    author reading a refusal sees the same sentence whichever speaker
+    refused.
+    """
+    await _quiet_hass(hass, freezer, "23:30")
+
+    with pytest.raises(ServiceValidationError) as err:
+        await async_deliver_message(
+            hass,
+            _options(quiet_start=QUIET_START, quiet_end=QUIET_END),
+            "Dishwasher finished",
+        )
+
+    assert err.value.translation_key == "quiet_hours"
+    assert err.value.translation_placeholders == {
+        "player": DIRECT_PLAYER,
+        "start": QUIET_START,
+        "end": QUIET_END,
+    }

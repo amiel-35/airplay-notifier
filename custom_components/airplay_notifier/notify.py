@@ -36,11 +36,17 @@ from typing import Any
 from homeassistant.components.notify import NotifyEntity, NotifyEntityFeature
 from homeassistant.components.notify.const import ATTR_DATA
 from homeassistant.components.notify.legacy import BaseNotificationService
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.const import STATE_UNAVAILABLE
+from homeassistant.core import (
+    Event,
+    EventStateChangedData,
+    HomeAssistant,
+    callback,
+)
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
 from . import AirplayNotifierConfigEntry, AirplayNotifierRuntimeData
@@ -158,22 +164,28 @@ class AirplayNotifierEntity(NotifyEntity):
     `notify.speak_2`, which is what the previous hard-coded `_attr_name =
     "Speak"` produced.
 
-    There is deliberately no `_attr_translation_key`: `_attr_name = None`
-    wins over it. `Entity._name_internal`
+    `_attr_translation_key` exists for `icons.json` alone, and can never
+    name the entity: `Entity._name_internal`
     (`homeassistant/helpers/entity.py:720` in 2026.9.1) starts with `if
     hasattr(self, "_attr_name"): return self._attr_name`, and declaring
     `_attr_name = None` on the class makes that `hasattr` true — the
-    `name_translation_key` lookup on the next branch is never reached. A
-    translation key here would be dead weight promising a name the entity
-    can never use, so the `entity.notify.speak` section was removed from
-    strings.json and all three translations too.
+    `name_translation_key` lookup on the next branch is never reached.
+    That is why there is no `entity.notify.*` section in strings.json or
+    in the three translations: it would promise a name the entity cannot
+    use. `icons.json` is a different file, resolved by key alone.
+
+    Availability mirrors the two entities the entry needs in order to
+    speak (`entity-unavailable`). Either one missing or `unavailable`
+    makes this entity `unavailable` too, and each transition — in either
+    direction — is logged exactly once (`log-when-unavailable`).
     """
 
     _attr_has_entity_name = True
     _attr_name = None
+    _attr_translation_key = "speak"
     _attr_supported_features = NotifyEntityFeature.TITLE
 
-    def __init__(self, entry: ConfigEntry) -> None:
+    def __init__(self, entry: AirplayNotifierConfigEntry) -> None:
         """Initialize the entity."""
         self._attr_unique_id = f"{entry.entry_id}_notify_entity"
         self._entry_id = entry.entry_id
@@ -184,6 +196,62 @@ class AirplayNotifierEntity(NotifyEntity):
             model="Spoken notifier",
             entry_type=DeviceEntryType.SERVICE,
         )
+        # Captured once, from the entry that is being set up: both are
+        # entry *data*, so changing either one (reconfigure flow) reloads
+        # the entry and builds a new entity.
+        options = entry.runtime_data.options
+        self._targets = [options.media_player, options.tts_entity]
+        self._unavailable_logged = False
+
+    async def async_added_to_hass(self) -> None:
+        """Start following the availability of both targets.
+
+        `async_track_state_change_event` + `_attr_available` +
+        `async_write_ha_state`, registered through `async_on_remove`, is
+        the core pattern for an entity derived from other entities (see
+        `homeassistant/components/switch_as_x/entity.py`,
+        `BaseEntity.async_added_to_hass`). The first evaluation happens
+        here, before the entity's initial state is written.
+        """
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass, self._targets, self._async_target_state_changed
+            )
+        )
+        self._async_update_availability()
+
+    @callback
+    def _async_target_state_changed(self, _event: Event[EventStateChangedData]) -> None:
+        """Re-evaluate availability after one of the targets changed."""
+        self._async_update_availability()
+        self.async_write_ha_state()
+
+    @callback
+    def _async_update_availability(self) -> None:
+        """Set `_attr_available`, logging only the transitions.
+
+        Logging on every event would fill the log with one line per
+        attribute change of an unavailable speaker; the rule asks for one
+        line when it goes away and one when it comes back.
+        """
+        unusable = [
+            entity_id
+            for entity_id in self._targets
+            if (state := self.hass.states.get(entity_id)) is None
+            or state.state == STATE_UNAVAILABLE
+        ]
+        self._attr_available = not unusable
+
+        if unusable and not self._unavailable_logged:
+            _LOGGER.info(
+                "%s is unavailable: %s cannot be reached",
+                self.entity_id,
+                ", ".join(unusable),
+            )
+            self._unavailable_logged = True
+        elif not unusable and self._unavailable_logged:
+            _LOGGER.info("%s is available again", self.entity_id)
+            self._unavailable_logged = False
 
     async def async_send_message(self, message: str, title: str | None = None) -> None:
         """Speak `message`.

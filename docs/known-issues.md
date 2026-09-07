@@ -1,22 +1,24 @@
 # Known issues and limitations
 
 Things this integration deliberately does not do, or cannot do, as of
-0.1.0. Each one is a real constraint that was verified, not a guess. See
+0.2.0. Each one is a real constraint that was verified, not a guess. See
 [`quality_scale.yaml`](../custom_components/airplay_notifier/quality_scale.yaml)
 for the wider self-assessment.
 
 ## Per-call `data` only works through the legacy service
 
-`data.volume`, `data.language`, `data.voice`, `data.tts_entity` and
-`data.source_entity` are only reachable through
+`data.volume`, `data.language`, `data.voice`, `data.tts_entity`,
+`data.source_entity` and `data.priority` are only reachable through
 `notify.airplay_<name>`. Home Assistant's modern `notify.send_message`
 action is registered with a fixed `message`/`title` schema
 (`homeassistant/components/notify/__init__.py`,
 `async_register_entity_service(SERVICE_SEND_MESSAGE, ...)`), so there is no
 way to pass a generic `data` payload to a `NotifyEntity`. Calls made
 through `notify.<player>` therefore always use the entry's configured
-defaults, and the deny-list is never exercised on that path — it has no
-`source_entity` to inspect.
+defaults: the deny-list is never exercised on that path — it has no
+`source_entity` to inspect — and a call cannot mark itself `critical` to
+get through quiet hours. Quiet hours themselves *do* apply to the entity,
+using the entry's configured quiet volume.
 
 Locked in by
 `tests/test_notify.py::test_notify_send_message_schema_has_no_data_field`,
@@ -73,21 +75,100 @@ your public hostname.
 The link is signed and short-lived, but if that matters to you, configure an
 internal URL in **Settings → System → Network**.
 
-## Availability is not tracked
+## A missing target defers the entry instead of raising a repair issue
 
-The `notify` entity is always available, and setup does not verify that the
-target `media_player` or the TTS entity still exist. A renamed or removed
-target fails at the first announcement, with an error from the underlying
-action, rather than showing up as unavailable or raising a repair issue.
+Since 0.2.0 the entry refuses to load while its `media_player` or TTS
+entity is absent from the state machine, and retries with a backoff — the
+right answer while the target's own integration is still starting. A
+target that is gone *for good* (renamed, deleted) therefore leaves the
+entry retrying forever, visible in Settings → Devices & services but not
+raised as a repair issue walking you through the fix. Use **Reconfigure**
+to point the entry at what exists now.
 
-## The target player and TTS engine cannot be changed
+An `unavailable` target — a speaker that is switched off — is a different
+case: the entry loads and the notify entity reports itself unavailable,
+which is what you want to see.
 
-`media_player` and `tts_entity` are the entry's identity (the `unique_id`
-and the source of the legacy service name), so there is no reconfigure
-flow: pointing at a different player means deleting the entry and adding a
-new one. The legacy service name follows the entry title, so renaming the
-entry renames `notify.airplay_<name>` — and anything referencing the old
-name in `alert.notifiers:` must be updated.
+## Renaming an entry renames its notify service
+
+The legacy service name follows the entry title, so renaming the entry
+renames `notify.airplay_<name>`, and anything referencing the old name in
+`alert.notifiers:` must be updated. The reconfigure flow deliberately does
+*not* rename it when you move the entry to another player, precisely so
+that a change of speaker cannot silently break an alert.
+
+Two entries whose titles slugify identically get numbered service names
+(`airplay_bedroom`, `airplay_bedroom_2`). The name an entry ends up with is
+stored on the entry itself and never moves again: a reconfigure, a reload,
+a restart, disabling another entry or **deleting** the entry that holds the
+plain name all leave it exactly as it was. A rename is the only thing that
+changes it.
+
+Three corollaries:
+
+- a disabled entry keeps its name reserved. That is deliberate — you will
+  re-enable it one day, and it should find its own `alert.notifiers:`
+  target waiting rather than taken by an entry created in the meantime;
+- renaming an entry onto a name another entry already holds gets you the
+  next free number, not the name itself. Nothing is ever taken away from an
+  entry that already has it;
+- **renaming back does not give you the plain name back.** Rename
+  "Bedroom" to "Bedroom 2" and the service becomes
+  `notify.airplay_bedroom_2` — the stored `airplay_bedroom` no longer
+  matches the new title. Rename it back to "Bedroom" and the service
+  **stays** `notify.airplay_bedroom_2`, because a `_<n>` suffix still
+  counts as deriving from `airplay_bedroom`; the plain name is left free
+  and unclaimed.
+
+That last one is deliberate, not an oversight. The alternative — reclaiming
+the plain name whenever it happens to be free — would rename a live service
+during a rename that was supposed to leave it alone, which is the exact
+failure the persisted name exists to prevent. Stable names over promotion.
+If you do want the plain name back, rename the entry to a genuinely
+different title first ("Study", say) and then back to "Bedroom": the trip
+through a title that derives nothing is what releases the suffix. The
+reasoning is in [ADR 0001](ADR/0001-legacy-service-name-is-persisted.md).
+
+If a name is unavailable for some other reason — another integration
+registered `notify.airplay_<something>` first — the entry logs an `ERROR`
+naming it and loads anyway, without a legacy service. Its notify **entity**
+still works; rename the entry to give it a name of its own.
+
+## An unavailable notify entity silently skips `notify.send_message`
+
+While the player or the TTS engine is `unavailable`, the `notify.<player>`
+entity is `unavailable` too — and Home Assistant does not fail a call that
+targets it. `async_extract_referenced_entity_ids` filters the candidates
+down to the available ones
+(`homeassistant/helpers/service.py`, `entity_candidates = [e for e in
+entity_candidates if e.available]`, line 722 in 2026.9.1) and
+`SelectedEntities.log_missing` (`homeassistant/helpers/target.py:136`)
+reports the remainder as a `WARNING`:
+
+```
+WARNING homeassistant.helpers.service: Referenced entities
+notify.living_room are missing or not currently available
+```
+
+So `notify.send_message` on an unavailable entity **succeeds and speaks
+nothing**. An automation that only checks whether the action failed will
+believe it announced something. Check the entity's availability in a
+condition if that matters to you, or use the legacy
+`notify.airplay_<name>` service, which is a plain service with no
+availability to filter on and which therefore either speaks or raises.
+
+## Quiet hours use Home Assistant's time zone, and only at call time
+
+The window is evaluated against Home Assistant's own local time when the
+announcement arrives. There is no per-entry time zone, and an announcement
+that starts one second before the window opens is not interrupted — quiet
+hours decide whether a message is spoken, not what happens to one already
+being spoken.
+
+`data.volume` chooses how loud an announcement that gets through will be;
+it does not get it through. Only `data.priority: critical` bypasses the
+window, so an automation that sets a volume cannot opt itself out of quiet
+hours by accident.
 
 ## Refusals fail the calling action
 

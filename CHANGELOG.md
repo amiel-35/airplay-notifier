@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-07
+
+### Added
+
+- **Quiet hours**: `quiet_start` / `quiet_end` options (leave both empty to
+  disable; an end earlier than the start crosses midnight) and an optional
+  `quiet_volume`. Inside the window an announcement is spoken at
+  `quiet_volume`, or refused with a translated `ServiceValidationError`
+  logged at `INFO` when none is set. `data.priority: critical` bypasses the
+  window; `data.volume` wins over `quiet_volume` but never turns a refusal
+  into an announcement.
+- **Reconfiguration flow**: the target `media_player` and the TTS engine can
+  be changed on an existing entry, keeping its options *and* its title — so
+  `notify.airplay_<name>`, and any `alert.notifiers:` pointing at it, keeps
+  working and now speaks on the new player.
+- **Availability**: the notify entity follows its `media_player` and TTS
+  entity and reports itself `unavailable` while either is missing or
+  unavailable, logging one line per transition in each direction.
+- **Setup deferral**: an entry whose `media_player` or TTS entity is absent
+  from the state machine raises `ConfigEntryNotReady` and is retried,
+  instead of loading and failing at every announcement.
+- **Suitability checks in the forms**: a `media_player` that does not
+  support `play_media` is refused at setup and at reconfigure, and the
+  Music Assistant strategy is refused for a player another integration
+  provides. Both stay permissive when the information is absent.
+- `icons.json`: the notify entity has its own icon.
+- README sections for removal and troubleshooting (a symptom-to-cause
+  table, the debug logger snippet, diagnostics).
+- Diagnostics report `legacy_service_registered` next to
+  `legacy_service_name`: whether this entry actually owns the notify
+  service it wants. Core registers silently or not at all, so
+  `hass.services.has_service` says nothing about who holds the name.
+- `docs/ADR/`: the two decisions whose mechanism only makes sense once you
+  know the decision — the persisted legacy service name (0001) and the
+  closed `priority` set (0002).
+
+### Changed
+
+- The legacy notify service name still follows the entry title, but two
+  entries whose titles slugify identically are now numbered
+  (`airplay_bedroom`, `airplay_bedroom_2`) instead of the second silently
+  having no service at all. The chosen name is **stored on the entry**, so
+  it survives a reconfigure, a reload, a restart, and the deletion of the
+  entry that holds the plain name; a disabled entry keeps its name
+  reserved. A name that is already in use is reported at `ERROR` and left
+  alone — the entry loads without a legacy service, and its notify entity
+  is unaffected.
+- Entry schema `MINOR_VERSION` 1 → 2 for the quiet-hours option keys.
+  Nothing stored is rewritten; a downgrade to 0.1.x now refuses the entry
+  rather than silently ignoring its quiet hours.
+- `data.priority` is accepted by the legacy service and validated against
+  a closed set of four values — `info`, `normal`, `high`, `critical` —
+  matched exactly and in lower case. Only `critical` acts (it bypasses
+  quiet hours); `high` deliberately does not. Recorded in
+  `docs/ADR/0002-priority-values.md`.
+- The options form refuses a quiet hours volume of 0: a silent announcement
+  tells the automation it spoke while nobody hears it. Leave the field
+  empty to get a refusal instead.
+- The reconfigure step re-checks a stored `music_assistant` strategy
+  against the new player, and reloads the entry once instead of twice.
+
+### Upgrade note
+
+Nothing to do for a single entry. If you run **two entries whose titles are
+the same** (two speakers both called "Bedroom", say), the second one now
+gets its own `notify.airplay_<name>_2` service where before it had none;
+check which name your `alert.notifiers:` refers to in Developer tools →
+Actions. Whichever name each entry ends up with is then stored on it and
+will not move again unless you rename the entry. Downgrading to 0.1.x after
+this release leaves entries that 0.1.x will refuse to load — its own
+`async_migrate_entry` refuses a newer minor version, which is why that hook
+shipped in 0.1.0 with nothing to migrate.
+
 ## [0.1.0] - 2026-09-07
 
 ### Added
@@ -53,5 +126,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rules (no placeholder inside single quotes, valid placeholder
   identifiers, no stray braces).
 
-[Unreleased]: https://github.com/amiel-35/airplay-notifier/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/amiel-35/airplay-notifier/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/amiel-35/airplay-notifier/releases/tag/v0.2.0
 [0.1.0]: https://github.com/amiel-35/airplay-notifier/releases/tag/v0.1.0

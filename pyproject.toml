@@ -1,6 +1,6 @@
 [project]
 name = "airplay-notifier"
-version = "0.1.0"
+version = "0.2.0"
 description = "A notify.* that speaks on AirPlay players (HomePod, Apple TV, AirPlay speakers)."
 readme = "README.md"
 license = { file = "LICENSE" }

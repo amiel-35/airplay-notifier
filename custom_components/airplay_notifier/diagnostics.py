@@ -21,7 +21,11 @@ from typing import Any
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.core import HomeAssistant
 
-from . import AirplayNotifierConfigEntry, AirplayNotifierRuntimeData
+from . import (
+    LEGACY_SERVICE_OWNERS,
+    AirplayNotifierConfigEntry,
+    AirplayNotifierRuntimeData,
+)
 
 TO_REDACT: set[str] = set()
 
@@ -36,6 +40,16 @@ async def async_get_config_entry_diagnostics(
     someone downloads diagnostics, so the resolved settings are reported as
     unavailable instead of raising `AttributeError` and producing no
     diagnostics at all.
+
+    `legacy_service_name` is the name this entry *wants*;
+    `legacy_service_registered` says whether it got it. The two differ
+    whenever the name was already taken — core's
+    `BaseNotificationService.async_register_services` returns early in
+    silence (`homeassistant/components/notify/legacy.py:312`), so
+    `hass.services.has_service` is true either way and answers nothing.
+    Only the ownership map (`LEGACY_SERVICE_OWNERS`, claimed in
+    `async_setup_entry`) knows, and "my `alert.notifiers:` stopped
+    speaking" is precisely the report this field settles.
     """
     runtime_data: AirplayNotifierRuntimeData | None = getattr(
         entry, "runtime_data", None
@@ -56,6 +70,14 @@ async def async_get_config_entry_diagnostics(
         ),
         "legacy_service_name": (
             runtime_data.legacy_service_name if runtime_data is not None else None
+        ),
+        "legacy_service_registered": (
+            hass.data.get(LEGACY_SERVICE_OWNERS, {}).get(
+                runtime_data.legacy_service_name
+            )
+            == entry.entry_id
+            if runtime_data is not None
+            else None
         ),
     }
     return async_redact_data(diagnostics, TO_REDACT)

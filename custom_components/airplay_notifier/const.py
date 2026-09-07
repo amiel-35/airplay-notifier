@@ -29,6 +29,15 @@ CONF_RESTORE_VOLUME: Final = "restore_volume"
 CONF_STRATEGY: Final = "strategy"
 CONF_ANNOUNCE_PREFIX: Final = "announce_prefix"
 CONF_DENY_DOMAINS: Final = "deny_domains"
+CONF_QUIET_START: Final = "quiet_start"
+CONF_QUIET_END: Final = "quiet_end"
+CONF_QUIET_VOLUME: Final = "quiet_volume"
+# The legacy `notify.<name>` service name this entry owns, persisted in
+# `entry.data` the first time the entry is set up. It is entry *data* and
+# not an option: it is part of the entry's identity — what
+# `alert.notifiers:` points at — and it must survive every reload,
+# reconfigure and restart untouched. See `__init__._async_legacy_service_name`.
+CONF_SERVICE_NAME: Final = "service_name"
 
 # Strategies.
 STRATEGY_AUTO: Final = "auto"
@@ -55,6 +64,32 @@ ATTR_LANGUAGE: Final = "language"
 ATTR_VOICE: Final = "voice"
 ATTR_TTS_ENTITY: Final = "tts_entity"
 ATTR_SOURCE_ENTITY: Final = "source_entity"
+ATTR_PRIORITY: Final = "priority"
+
+# `priority` is a closed set of four values, matched exactly and in lower
+# case. Closed rather than a free string: a typo in the value that decides
+# whether a 3am alarm is spoken must fail the call rather than quietly
+# behave like `normal`.
+#
+# Accepting all four is not the same as acting on all four: only
+# `critical` does anything here (it bypasses quiet hours). `info`,
+# `normal` and `high` are accepted so a caller is never refused for saying
+# something true about its own message — and `high` is deliberately *not*
+# a bypass, because "important" is not "wake the house".
+#
+# This repository's rule, recorded in
+# `docs/ADR/0002-priority-values.md`; aligned with Notify Switchboard's
+# vocabulary, which is not what decides it.
+PRIORITY_INFO: Final = "info"
+PRIORITY_NORMAL: Final = "normal"
+PRIORITY_HIGH: Final = "high"
+PRIORITY_CRITICAL: Final = "critical"
+VALID_PRIORITIES: Final[tuple[str, ...]] = (
+    PRIORITY_INFO,
+    PRIORITY_NORMAL,
+    PRIORITY_HIGH,
+    PRIORITY_CRITICAL,
+)
 
 # Heuristic used to size the volume-restore delay when a strategy cannot
 # report when playback actually finished (see docs/ARCHITECTURE.md).

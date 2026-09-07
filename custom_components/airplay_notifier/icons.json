@@ -1,0 +1,9 @@
+{
+  "entity": {
+    "notify": {
+      "speak": {
+        "default": "mdi:account-voice"
+      }
+    }
+  }
+}
