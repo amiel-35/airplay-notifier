@@ -20,6 +20,7 @@ from custom_components.airplay_notifier.const import (
     CONF_QUIET_START,
     CONF_QUIET_VOLUME,
     CONF_RESTORE_VOLUME,
+    CONF_SERVICE_NAME,
     CONF_STRATEGY,
     CONF_TTS_ENTITY,
     CONF_VOLUME,
@@ -443,6 +444,10 @@ async def test_reconfigure_reloads_a_loaded_entry_keeping_its_service_name(
     assert entry.state is ConfigEntryState.LOADED
     assert entry.runtime_data.options.media_player == OTHER_PLAYER
     assert hass.services.has_service("notify", "airplay_living_room")
+    # The persisted name is what survives, not just the live registration:
+    # `data_updates` merges into `entry.data`, so a reconfigure that dropped
+    # `service_name` would look identical here until the next restart.
+    assert entry.data[CONF_SERVICE_NAME] == "airplay_living_room"
 
 
 BASE_OPTIONS = {

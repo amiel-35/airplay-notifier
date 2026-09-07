@@ -866,3 +866,48 @@ async def test_send_message_to_the_unavailable_entity_is_skipped_not_raised(
     )
     await hass.async_block_till_done()
     assert len(speak_calls) == 1
+
+
+async def test_renaming_back_to_the_plain_title_keeps_the_suffixed_name(
+    hass: HomeAssistant, targets: None
+) -> None:
+    """A round-trip rename does not reclaim the unsuffixed name.
+
+    "Bedroom" → "Bedroom 2" → "Bedroom". The first rename makes the title
+    slugify to `airplay_bedroom_2`, which the stored `airplay_bedroom` does
+    not derive from, so the name is recomputed. The second rename brings
+    the base back to `airplay_bedroom` — and the stored `airplay_bedroom_2`
+    *does* derive from that base, so it is kept exactly as it is. The plain
+    name is never reclaimed, even though nothing holds it any more.
+
+    That is the deliberate half of `_derives_from`: stable names over
+    promotion. A name a user has already written into `alert.notifiers:`
+    never moves behind their back, and the alternative — reclaiming the
+    plain name whenever it happens to be free — would rename the service on
+    a rename that was supposed to leave it alone. See
+    `docs/known-issues.md` and `docs/ADR/0001-legacy-service-name-is-persisted.md`.
+    """
+    hass.states.async_set("media_player.bedroom", "idle", {})
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Bedroom",
+        unique_id="media_player.bedroom",
+        data={CONF_MEDIA_PLAYER: "media_player.bedroom", CONF_TTS_ENTITY: TTS_ENTITY},
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.data[CONF_SERVICE_NAME] == "airplay_bedroom"
+
+    hass.config_entries.async_update_entry(entry, title="Bedroom 2")
+    await hass.async_block_till_done()
+    assert entry.data[CONF_SERVICE_NAME] == "airplay_bedroom_2"
+    assert not hass.services.has_service("notify", "airplay_bedroom")
+
+    hass.config_entries.async_update_entry(entry, title="Bedroom")
+    await hass.async_block_till_done()
+
+    assert entry.data[CONF_SERVICE_NAME] == "airplay_bedroom_2"
+    assert entry.runtime_data.legacy_service_name == "airplay_bedroom_2"
+    assert hass.services.has_service("notify", "airplay_bedroom_2")
+    assert not hass.services.has_service("notify", "airplay_bedroom")

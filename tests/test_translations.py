@@ -11,6 +11,7 @@ core PR).
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import string
@@ -170,26 +171,131 @@ def test_entity_section_is_absent_everywhere() -> None:
         assert not any(key.startswith("entity.") for key in _load(path)), path.name
 
 
+# `strings.json` puts a config flow's form errors under `config.error.*`
+# and an options flow's under `options.error.*`; the base class a flow
+# inherits from is what decides which. Deriving the section this way keeps
+# the mapping structural — the thing a hand-maintained list gets wrong is
+# the *keys*, not which of the two sections they belong in.
+ERROR_SECTION_BY_FLOW_BASE = {"ConfigFlow": "config", "OptionsFlow": "options"}
+
+
+def _returned_string_literals(node: ast.FunctionDef) -> set[str]:
+    """Return every string literal `node` can `return`.
+
+    A helper such as `_media_player_error` yields the error key that the
+    flow then assigns, so its literals count as form errors too.
+    """
+    return {
+        child.value.value
+        for child in ast.walk(node)
+        if isinstance(child, ast.Return)
+        and isinstance(child.value, ast.Constant)
+        and isinstance(child.value.value, str)
+    }
+
+
+def _form_error_keys_by_section() -> dict[str, set[str]]:
+    """Read the form-error keys the two flows can set out of their source.
+
+    Every one of them is an `errors[<field>] = ...` assignment inside a
+    flow class, whose value is either a string literal or a name bound by a
+    walrus from a module-level helper (`if (error := _media_player_error(…))`).
+    Anything else is a shape this parser does not understand, and is failed
+    rather than skipped: a form error that silently escaped the sweep is
+    exactly the bug this test exists to catch.
+    """
+    tree = ast.parse((INTEGRATION_DIR / "config_flow.py").read_text(encoding="utf-8"))
+
+    helpers = {
+        node.name: _returned_string_literals(node)
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+    }
+
+    keys: dict[str, set[str]] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        bases = {base.id for base in node.bases if isinstance(base, ast.Name)}
+        section = next(
+            (
+                ERROR_SECTION_BY_FLOW_BASE[base]
+                for base in bases
+                if base in ERROR_SECTION_BY_FLOW_BASE
+            ),
+            None,
+        )
+        assert section is not None, f"unknown flow base for {node.name}: {bases}"
+
+        # `if (error := _media_player_error(…)) is not None:` — the name the
+        # assignment below reads, and the helper that produced it.
+        walrus_helpers = {
+            child.target.id: child.value.func.id
+            for child in ast.walk(node)
+            if isinstance(child, ast.NamedExpr)
+            and isinstance(child.value, ast.Call)
+            and isinstance(child.value.func, ast.Name)
+        }
+
+        found = keys.setdefault(section, set())
+        for child in ast.walk(node):
+            if not isinstance(child, ast.Assign) or not any(
+                isinstance(target, ast.Subscript)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "errors"
+                for target in child.targets
+            ):
+                continue
+            value = child.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                found.add(value.value)
+            elif isinstance(value, ast.Name) and value.id in walrus_helpers:
+                found |= helpers[walrus_helpers[value.id]]
+            else:
+                raise AssertionError(
+                    f"{node.name}: unparsable form error at line {child.lineno}"
+                )
+
+    return keys
+
+
 def test_every_form_error_the_flows_raise_is_translated() -> None:
     """A form error with no string renders as its raw key in the UI.
 
-    `already_configured` and `not_a_music_assistant_player` are set as
-    *errors* by the reconfigure step, which is a `config` flow — the
+    The keys are read out of `config_flow.py` rather than listed here: a
+    list maintained by hand goes stale the day a new `errors[…] = "…"` is
+    added, which is the only day this test matters. `already_configured`
+    and `not_a_music_assistant_player` are set as *errors* by the
+    reconfigure step, which is a `config` flow — the
     `config.abort.already_configured` core-style key next door does not
     cover them, and `options.error.*` is a different section again.
     """
     strings = _load(INTEGRATION_DIR / "strings.json")
+    keys_by_section = _form_error_keys_by_section()
 
-    for key in (
+    assert set(keys_by_section) == {"config", "options"}
+    for section, keys in keys_by_section.items():
+        # A sweep that found nothing would pass every assertion below.
+        assert keys, section
+        for key in keys:
+            assert f"{section}.error.{key}" in strings, f"{section}.error.{key}"
+
+
+def test_the_form_error_sweep_still_sees_the_known_keys() -> None:
+    """Guard the parser itself: these keys exist today and must be found.
+
+    Without this, a change of shape in `config_flow.py` that made the sweep
+    return empty sets would turn the test above into a no-op that passes.
+    """
+    keys_by_section = _form_error_keys_by_section()
+
+    assert keys_by_section["config"] == {
         "already_configured",
         "not_a_music_assistant_player",
         "unsupported_player",
-    ):
-        assert f"config.error.{key}" in strings, key
-
-    for key in (
+    }
+    assert keys_by_section["options"] == {
         "not_a_music_assistant_player",
         "quiet_hours_incomplete",
         "quiet_volume_silent",
-    ):
-        assert f"options.error.{key}" in strings, key
+    }

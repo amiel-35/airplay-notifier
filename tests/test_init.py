@@ -20,6 +20,7 @@ from pytest_homeassistant_custom_component.common import (
 from custom_components.airplay_notifier import (
     LEGACY_SERVICE_OWNERS,
     _async_remove_legacy_service,
+    _derives_from,
     async_migrate_entry,
 )
 from custom_components.airplay_notifier.config_flow import AirplayNotifierConfigFlow
@@ -56,6 +57,11 @@ def test_manifest_declares_a_helper_with_no_polling() -> None:
     manifest = _manifest()
     assert manifest["integration_type"] == "helper"
     assert manifest["iot_class"] == "calculated"
+
+
+def test_a_double_suffix_does_not_derive_from_the_base() -> None:
+    """`base_2_2` is not a numbered variant of `base`: `"2_2".isdigit()` is False."""
+    assert not _derives_from("base_2_2", "base")
 
 
 def test_manifest_keys_and_lists_are_sorted() -> None:
