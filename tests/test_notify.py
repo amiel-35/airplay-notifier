@@ -495,3 +495,83 @@ async def test_the_entity_declares_a_translation_key_for_its_icon(
     # The key names the icon, never the entity: the name still comes from
     # the device, exactly as before the key existed.
     assert hass.states.get(notify_entity).attributes["friendly_name"] == "Living Room"
+
+
+async def test_legacy_service_name_comes_from_the_title_not_the_entity_id(
+    hass: HomeAssistant, targets: None
+) -> None:
+    """`notify.airplay_<slugify(title)>`, and nothing else.
+
+    The distinction matters because the two differ in practice: this entry
+    is titled after the player's friendly name ("Living Room") while its
+    entity id is `media_player.lounge_atv_2`. The service name is what
+    `alert.notifiers:` refers to, so which of the two it follows is part
+    of the integration's contract, not an implementation detail.
+    """
+    hass.states.async_set("media_player.lounge_atv_2", "idle", {})
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Living Room",
+        unique_id="media_player.lounge_atv_2",
+        data={
+            CONF_MEDIA_PLAYER: "media_player.lounge_atv_2",
+            CONF_TTS_ENTITY: TTS_ENTITY,
+        },
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert hass.services.has_service("notify", "airplay_living_room")
+    assert not hass.services.has_service("notify", "airplay_lounge_atv_2")
+    assert entry.runtime_data.legacy_service_name == "airplay_living_room"
+
+
+async def test_two_entries_with_the_same_title_get_distinct_services(
+    hass: HomeAssistant, targets: None
+) -> None:
+    """Two players sharing a friendly name still get one service each.
+
+    Core's `BaseNotificationService.async_register_services` returns early
+    when the service name already exists, so without a suffix the second
+    entry would silently have no legacy service at all — and unloading the
+    first would remove the one service both were sharing.
+    """
+    hass.states.async_set("media_player.bedroom_left", "idle", {})
+    hass.states.async_set("media_player.bedroom_right", "idle", {})
+    entries = []
+    for object_id in ("bedroom_left", "bedroom_right"):
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            title="Bedroom",
+            unique_id=f"media_player.{object_id}",
+            data={
+                CONF_MEDIA_PLAYER: f"media_player.{object_id}",
+                CONF_TTS_ENTITY: TTS_ENTITY,
+            },
+        )
+        entry.add_to_hass(hass)
+        entries.append(entry)
+
+    assert await hass.config_entries.async_setup(entries[0].entry_id)
+    await hass.async_block_till_done()
+
+    assert entries[0].runtime_data.legacy_service_name == "airplay_bedroom"
+    assert entries[1].runtime_data.legacy_service_name == "airplay_bedroom_2"
+    assert hass.services.has_service("notify", "airplay_bedroom")
+    assert hass.services.has_service("notify", "airplay_bedroom_2")
+
+    # Deterministic: a reload gives the same entry the same name back.
+    await hass.config_entries.async_reload(entries[1].entry_id)
+    await hass.async_block_till_done()
+    assert entries[1].runtime_data.legacy_service_name == "airplay_bedroom_2"
+    assert hass.services.has_service("notify", "airplay_bedroom")
+    assert hass.services.has_service("notify", "airplay_bedroom_2")
+
+    # And each service reaches its own player.
+    speak_calls = async_mock_service(hass, "tts", "speak")
+    await hass.services.async_call(
+        "notify", "airplay_bedroom_2", {"message": "Ready"}, blocking=True
+    )
+    await hass.async_block_till_done()
+    assert speak_calls[0].data["media_player_entity_id"] == "media_player.bedroom_right"
